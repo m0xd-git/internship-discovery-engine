@@ -1,0 +1,79 @@
+# =============================================================================
+# Git Ignore Configuration: Public Internship Discovery Recommendation Engine
+# =============================================================================
+
+# Python Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Byte-compiled / optimized / cache files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# SQLite Database Files (Preserves schema.sql & seed_data.py for teammate generation)
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+data/*.db
+tests/*.db
+tests/*_isolated.db
+
+# Environment variables, credentials, and secrets
+.env
+.env.*
+*.env
+*.pem
+*.key
+*.cert
+secrets.json
+
+# Testing & Coverage artifacts
+.pytest_cache/
+.coverage
+.coverage.*
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+htmlcov/
+
+# Editor and IDE configurations
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# Operating System temporary and cache files
+.DS_Store
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/

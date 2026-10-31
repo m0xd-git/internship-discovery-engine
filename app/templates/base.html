@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Internship Discovery & Skill-Gap Recommendation Engine{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+</head>
+<body>
+    <!-- Top Academic & Demonstration Banner -->
+    <header class="demo-banner" role="banner">
+        <div class="container banner-content">
+            <span class="badge-demo">ACADEMIC DEMONSTRATION</span>
+            <p>
+                <strong>Notice:</strong> All internship opportunities in this system are realistic pedagogical samples (<code>is_demo = 1</code>).
+                They are not live employment vacancies.
+            </p>
+        </div>
+    </header>
+
+    <!-- Navigation Header -->
+    <nav class="navbar" role="navigation" aria-label="Main Navigation">
+        <div class="container nav-container">
+            <a href="{{ url_for('views.dashboard') }}" class="brand-link">
+                <span class="brand-title">Internship Discovery Engine</span>
+                <span class="brand-subtitle">Skill-Gap & Decision Support System</span>
+            </a>
+            <ul class="nav-links">
+                <li><a href="{{ url_for('views.dashboard') }}" class="nav-item {% if request.path == '/' %}active{% endif %}">Discovery Dashboard</a></li>
+                <li><a href="{{ url_for('views.profile') }}" class="nav-item {% if request.path == '/profile' %}active{% endif %}">Student Profile</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <!-- Main Content Area -->
+    <main class="main-content" id="main-content">
+        <div class="container">
+            {% block content %}{% endblock %}
+        </div>
+    </main>
+
+    <!-- Ethical AI & Algorithmic Notice Footer -->
+    <footer class="footer" role="contentinfo">
+        <div class="container footer-content">
+            <div class="footer-notice">
+                <h4>Ethical Recommender System Notice</h4>
+                <p>
+                    Recommendation scores indicate <em>algorithmic alignment</em> between candidate profiles and listed opportunity requirements.
+                    <strong>Scores do not represent hiring probabilities</strong> or guarantees of employment.
+                    Missing skills represent absence from the student profile, not proof of inability.
+                </p>
+            </div>
+            <div class="footer-meta">
+                <p>College Project | Python & Flask Engine with SQLite Persistence</p>
+                <p><a href="{{ url_for('views.health_check') }}" target="_blank" rel="noopener">System Health Check</a></p>
+            </div>
+        </div>
+    </footer>
+
+    {% block scripts %}{% endblock %}
+</body>
+</html>

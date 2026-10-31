@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+
+{% block title %}Student Profile | Internship Discovery Engine{% endblock %}
+
+{% block content %}
+<section class="section-header">
+    <div class="header-intro">
+        <h1>Student Competency & Academic Profile</h1>
+        <p class="subtitle">
+            Configure student academic credentials, work preferences, and listed technical skills.
+            Saved profiles are stored persistently in SQLite and evaluated by the discovery engine.
+        </p>
+    </div>
+</section>
+
+<!-- Feedback Alert Box -->
+<div id="profileAlert" class="alert hidden" role="alert" aria-live="assertive"></div>
+
+<!-- Student Profile Selection Bar -->
+<section class="card profile-selection-card" aria-labelledby="profile-select-heading" style="margin-bottom: 1.5rem;">
+    <div class="selection-row">
+        <div class="select-group">
+            <label for="profileStudentSelect" id="profile-select-heading">
+                <strong>Select Profile to View / Edit:</strong>
+            </label>
+            <div class="select-wrapper">
+                <select id="profileStudentSelect" class="form-control" aria-describedby="profile-selector-hint">
+                    <option value="">-- Loading Registered Students... --</option>
+                </select>
+            </div>
+            <span id="profile-selector-hint" class="field-hint">
+                Choose an existing student to inspect or update their credentials, or create a brand new profile.
+            </span>
+        </div>
+        <div class="selection-actions">
+            <button type="button" id="createNewProfileBtn" class="btn btn-outline">
+                <span class="btn-text">+ Create New Student</span>
+            </button>
+        </div>
+    </div>
+</section>
+
+<div class="profile-layout">
+    <!-- Form Card -->
+    <div class="card form-card">
+        <!-- Profile Mode Banner (Clear distinction between Editing and Creating) -->
+        <div class="profile-mode-bar" id="profileModeBanner">
+            <div class="profile-mode-info">
+                <span class="profile-mode-badge" id="modeBadge">Editing Profile</span>
+                <strong id="modeTitle">Loading student profile...</strong>
+            </div>
+            <span id="modeDescription" class="profile-mode-desc">Changes will update this saved profile in SQLite.</span>
+        </div>
+
+        <form id="studentProfileForm" novalidate>
+            <h2 class="form-section-title">Academic & Contact Information</h2>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="studentName">Full Name <span class="required-star">*</span></label>
+                    <input type="text" id="studentName" name="name" class="form-control" placeholder="e.g. Aarav Sharma" required>
+                    <span class="field-error" id="nameError"></span>
+                </div>
+
+                <div class="form-group">
+                    <label for="studentEmail">Email Address <span class="required-star">*</span></label>
+                    <input type="email" id="studentEmail" name="email" class="form-control" placeholder="e.g. aarav.sharma@example.edu" required>
+                    <span class="field-hint">Used as unique identifier. Existing email will update profile.</span>
+                    <span class="field-error" id="emailError"></span>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="studentMajor">Academic Major / Discipline <span class="required-star">*</span></label>
+                    <input type="text" id="studentMajor" name="major" class="form-control" list="majorSuggestions" placeholder="e.g. Computer Science" required>
+                    <datalist id="majorSuggestions">
+                        <option value="Computer Science">
+                        <option value="Information Technology">
+                        <option value="Software Engineering">
+                        <option value="Data Science">
+                        <option value="Artificial Intelligence">
+                        <option value="Electronics & Communication">
+                        <option value="Mechanical Engineering">
+                    </datalist>
+                    <span class="field-error" id="majorError"></span>
+                </div>
+
+                <div class="form-group">
+                    <label for="studentCgpa">Cumulative CGPA (0.00 – 4.00 scale) <span class="required-star">*</span></label>
+                    <input type="number" id="studentCgpa" name="cgpa" class="form-control" min="0.0" max="4.0" step="0.01" placeholder="e.g. 3.60" required>
+                    <span class="field-error" id="cgpaError"></span>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="studentGradYear">Graduation Year <span class="required-star">*</span></label>
+                    <input type="number" id="studentGradYear" name="graduation_year" class="form-control" min="2020" max="2035" placeholder="e.g. 2026" required>
+                    <span class="field-error" id="gradYearError"></span>
+                </div>
+
+                <div class="form-group">
+                    <label for="studentWorkMode">Preferred Work Mode <span class="required-star">*</span></label>
+                    <select id="studentWorkMode" name="preferred_work_mode" class="form-control" required>
+                        <option value="Remote">Remote (Work from anywhere)</option>
+                        <option value="Hybrid">Hybrid (Combination of remote & office)</option>
+                        <option value="Onsite">Onsite (In-person office presence)</option>
+                        <option value="Any">Any (Flexible / open to all arrangements)</option>
+                    </select>
+                    <span class="field-error" id="workModeError"></span>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="studentLocation">Preferred Geographic Location <span class="required-star">*</span></label>
+                <input type="text" id="studentLocation" name="preferred_location" class="form-control" placeholder="e.g. Bengaluru, India (or 'Any')" required>
+                <span class="field-error" id="locationError"></span>
+            </div>
+
+            <div class="form-group">
+                <label for="studentBio">Bio / Project Summary <span class="optional-tag">(Optional)</span></label>
+                <textarea id="studentBio" name="bio_summary" class="form-control" rows="3" placeholder="Brief summary of projects, coursework, or focus areas..."></textarea>
+            </div>
+
+            <!-- Skills Tag Management Section -->
+            <h2 class="form-section-title">Technical Competencies & Skills</h2>
+            <div class="skills-input-panel">
+                <div class="skill-entry-row">
+                    <div class="skill-input-group">
+                        <label for="skillNameInput">Skill Name:</label>
+                        <input type="text" id="skillNameInput" class="form-control" placeholder="e.g. Python, SQL, Docker, React..." list="skillSuggestions">
+                        <datalist id="skillSuggestions">
+                            <option value="Python">
+                            <option value="SQL">
+                            <option value="PostgreSQL">
+                            <option value="JavaScript">
+                            <option value="React">
+                            <option value="Flask">
+                            <option value="Docker">
+                            <option value="Git">
+                            <option value="Linux">
+                            <option value="Data Analysis">
+                            <option value="Machine Learning">
+                            <option value="PyTorch">
+                            <option value="HTML/CSS">
+                            <option value="REST APIs">
+                        </datalist>
+                    </div>
+
+                    <div class="proficiency-group">
+                        <label for="skillProficiencySelect">Proficiency:</label>
+                        <select id="skillProficiencySelect" class="form-control">
+                            <option value="Beginner">Beginner</option>
+                            <option value="Intermediate" selected>Intermediate</option>
+                            <option value="Advanced">Advanced</option>
+                        </select>
+                    </div>
+
+                    <div class="skill-add-btn-group">
+                        <button type="button" id="addSkillBtn" class="btn btn-secondary">Add Skill</button>
+                    </div>
+                </div>
+
+                <!-- Quick Suggestion Chips -->
+                <div class="quick-skills-row">
+                    <span class="quick-label">Quick Suggestions:</span>
+                    <div class="quick-chips">
+                        <button type="button" class="chip-btn" data-skill="Python">+ Python</button>
+                        <button type="button" class="chip-btn" data-skill="SQL">+ SQL</button>
+                        <button type="button" class="chip-btn" data-skill="Git">+ Git</button>
+                        <button type="button" class="chip-btn" data-skill="Docker">+ Docker</button>
+                        <button type="button" class="chip-btn" data-skill="JavaScript">+ JavaScript</button>
+                        <button type="button" class="chip-btn" data-skill="React">+ React</button>
+                        <button type="button" class="chip-btn" data-skill="Data Analysis">+ Data Analysis</button>
+                    </div>
+                </div>
+
+                <!-- Currently Selected Skills Container -->
+                <div class="active-skills-container">
+                    <label><strong>Currently Listed Skills (<span id="skillCount">0</span>):</strong></label>
+                    <div id="skillsList" class="pills-container skills-badge-list">
+                        <!-- Populated dynamically via JavaScript -->
+                    </div>
+                    <span id="noSkillsNotice" class="field-hint">No skills added yet. Use the inputs above to add competencies.</span>
+                </div>
+            </div>
+
+            <!-- Form Action Buttons -->
+            <div class="form-actions">
+                <button type="submit" id="saveProfileBtn" class="btn btn-primary">
+                    <span class="btn-text">Save Profile to Database</span>
+                </button>
+                <a href="{{ url_for('views.dashboard') }}" class="btn btn-outline">Back to Dashboard</a>
+            </div>
+        </form>
+    </div>
+
+    <!-- Quick Tips Side Card -->
+    <aside class="card tips-card" aria-labelledby="tips-heading">
+        <h3 id="tips-heading">Profile Guidance & Viva Tips</h3>
+        <ul class="tips-list">
+            <li>
+                <strong>Academic Baseline:</strong>
+                Minimum CGPA and graduation year limits are evaluated by the <em>Rule-Based Gatekeeper</em> before recommendation ranking.
+            </li>
+            <li>
+                <strong>Canonical Alias Resolution:</strong>
+                Skills like <code>postgres</code> or <code>sklearn</code> are automatically mapped to <code>PostgreSQL</code> and <code>Scikit-Learn</code>.
+            </li>
+            <li>
+                <strong>Absence vs Inability:</strong>
+                Missing skills represent absence from your profile, not proof of inability.
+            </li>
+            <li>
+                <strong>Persistent Storage:</strong>
+                Profiles are stored directly in SQLite using parameterized queries with foreign key constraints.
+            </li>
+        </ul>
+    </aside>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/api.js') }}"></script>
+<script src="{{ url_for('static', filename='js/profile.js') }}"></script>
+{% endblock %}

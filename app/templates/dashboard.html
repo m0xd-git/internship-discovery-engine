@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard | Internship Discovery Engine{% endblock %}
+
+{% block content %}
+<section class="section-header">
+    <div class="header-intro">
+        <h1>Internship Discovery & Skill-Gap Analysis</h1>
+        <p class="subtitle">
+            Select a student profile to evaluate eligible opportunities, identify actionable skill gaps,
+            and inspect transparent score breakdowns.
+        </p>
+    </div>
+</section>
+
+<!-- Student Selection & Profile Card -->
+<section class="card profile-selection-card" aria-labelledby="profile-select-heading">
+    <div class="selection-row">
+        <div class="select-group">
+            <label for="studentSelect" id="profile-select-heading"><strong>Select Student Profile:</strong></label>
+            <div class="select-wrapper">
+                <select id="studentSelect" class="form-control" aria-describedby="profile-hint">
+                    <option value="" disabled selected>Loading saved profiles...</option>
+                </select>
+            </div>
+            <span id="profile-hint" class="field-hint">Choose a pre-seeded student profile or create a custom one.</span>
+        </div>
+        <div class="selection-actions">
+            <button id="discoverBtn" class="btn btn-primary" disabled>
+                <span class="btn-text">Discover Recommended Internships</span>
+            </button>
+            <a href="{{ url_for('views.profile') }}" id="editProfileLink" class="btn btn-outline">Edit / Create Profile</a>
+        </div>
+    </div>
+
+    <!-- Active Student Summary Info -->
+    <div id="studentDetailsCard" class="student-summary-box hidden">
+        <div class="summary-grid">
+            <div class="summary-item">
+                <span class="summary-label">Name:</span>
+                <span class="summary-value" id="summaryName">-</span>
+            </div>
+            <div class="summary-item">
+                <span class="summary-label">Academic Major:</span>
+                <span class="summary-value" id="summaryMajor">-</span>
+            </div>
+            <div class="summary-item">
+                <span class="summary-label">CGPA:</span>
+                <span class="summary-value" id="summaryCgpa">-</span>
+            </div>
+            <div class="summary-item">
+                <span class="summary-label">Graduation Year:</span>
+                <span class="summary-value" id="summaryGradYear">-</span>
+            </div>
+            <div class="summary-item">
+                <span class="summary-label">Preferred Mode:</span>
+                <span class="summary-value" id="summaryWorkMode">-</span>
+            </div>
+            <div class="summary-item">
+                <span class="summary-label">Location:</span>
+                <span class="summary-value" id="summaryLocation">-</span>
+            </div>
+        </div>
+        <div class="student-skills-row">
+            <span class="summary-label">Current Listed Skills:</span>
+            <div id="summarySkills" class="pills-container">
+                <!-- Dynamically populated skills -->
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Status & Alert Messages -->
+<div id="alertBox" class="alert hidden" role="alert" aria-live="assertive"></div>
+
+<!-- Loading State Spinner -->
+<div id="loadingState" class="loading-state hidden" aria-live="polite">
+    <div class="spinner"></div>
+    <p>Evaluating mandatory eligibility rules, matching skills, and computing transparent scores...</p>
+</div>
+
+<!-- Recommendations Results Container -->
+<section id="resultsSection" class="results-section hidden" aria-label="Recommendation Results">
+    <!-- Results Summary Header -->
+    <div class="results-header">
+        <div>
+            <h2>Recommendation Results</h2>
+            <p id="resultsMeta" class="results-meta">Evaluated 6 sample opportunities.</p>
+        </div>
+    </div>
+
+    <!-- Segregated Tabs: Eligible vs Ineligible -->
+    <div class="tabs" role="tablist" aria-label="Opportunity Categories">
+        <button id="tabEligible" class="tab-btn active" role="tab" aria-selected="true" aria-controls="panelEligible">
+            Eligible & Recommended <span id="countEligible" class="tab-badge">0</span>
+        </button>
+        <button id="tabIneligible" class="tab-btn" role="tab" aria-selected="false" aria-controls="panelIneligible">
+            Disqualified / Ineligible <span id="countIneligible" class="tab-badge badge-danger">0</span>
+        </button>
+    </div>
+
+    <!-- Panel 1: Eligible Recommendations (Ranked) -->
+    <div id="panelEligible" class="tab-panel active" role="tabpanel" aria-labelledby="tabEligible">
+        <div id="eligibleCardsContainer" class="cards-grid">
+            <!-- Dynamically populated recommendation cards -->
+        </div>
+        <div id="emptyEligibleState" class="empty-state hidden">
+            <p>No eligible internships found matching the selected student's academic and logistical criteria.</p>
+        </div>
+    </div>
+
+    <!-- Panel 2: Ineligible Opportunities (With Rejection Reasons) -->
+    <div id="panelIneligible" class="tab-panel hidden" role="tabpanel" aria-labelledby="tabIneligible">
+        <div class="disqualification-notice">
+            <p>
+                <strong>Hard Gatekeeper Audit:</strong> These internships are separated from the recommendations because
+                the candidate does not meet one or more mandatory eligibility requirements. A high skill match can never
+                override a failed mandatory requirement.
+            </p>
+        </div>
+        <div id="ineligibleCardsContainer" class="cards-grid">
+            <!-- Dynamically populated disqualified cards -->
+        </div>
+        <div id="emptyIneligibleState" class="empty-state hidden">
+            <p>None! The student is eligible for all evaluated internships.</p>
+        </div>
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/api.js') }}"></script>
+<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+{% endblock %}
