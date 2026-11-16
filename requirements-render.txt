@@ -1,0 +1,14 @@
+# =============================================================================
+# Render Free Deployment Dependencies (Zero Heavy AI / CPU-Only Safe)
+# Context: Used for Render cloud deployment with ENABLE_SEMANTIC_AI=false.
+# Omits Sentence Transformers and PyTorch to operate within Render Free's 512 MB RAM limit.
+# =============================================================================
+
+# Production WSGI Server for Linux
+gunicorn>=23.0.0,<24.0.0
+
+# Core Web Framework (Flask and standard dependencies: Werkzeug, Jinja2, Click, itsdangerous, Blinker, MarkupSafe)
+Flask>=3.1.0,<4.0.0
+
+# Numerical Array Utility (Required by app.engine.semantic module imports)
+numpy>=2.1.0,<3.0.0
