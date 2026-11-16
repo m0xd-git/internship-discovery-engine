@@ -18,6 +18,7 @@ The persistent database `data/internship_engine.db` is NEVER touched.
 import os
 import json
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from app import create_app
@@ -480,6 +481,39 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertIsInstance(sem["raw_similarity"], (int, float))
         self.assertIsInstance(sem["fallback_applied"], bool)
         self.assertIn("all-MiniLM-L6-v2", sem["notice"])
+
+    def test_recommend_endpoint_when_semantic_ai_disabled(self):
+        """POST /api/recommend with ENABLE_SEMANTIC_AI=false must return fallback breakdown and explanation."""
+        with patch.dict(os.environ, {"ENABLE_SEMANTIC_AI": "false"}):
+            response = self.client.post("/api/recommend", json={"student_id": 1})
+            self.assertEqual(response.status_code, 200)
+            data = response.get_json()
+
+            eligible = data["eligible_recommendations"]
+            self.assertGreater(len(eligible), 0)
+
+            top_rec = eligible[0]
+            bd = top_rec["score_breakdown"]
+            sem = bd["semantic_similarity"]
+
+            # Semantic similarity should show fallback active with 0 points/weight
+            self.assertTrue(sem["fallback_applied"])
+            self.assertIn("ENABLE_SEMANTIC_AI=False", sem["fallback_reason"])
+            self.assertEqual(sem["points"], 0.0)
+            self.assertEqual(sem["max_points"], 0.0)
+            self.assertEqual(sem["weight"], 0.0)
+
+            # Heuristic weights must be active: 45/15/20/20
+            self.assertEqual(bd["required_skills"]["max_points"], 45.0)
+            self.assertEqual(bd["preferred_skills"]["max_points"], 15.0)
+            self.assertEqual(bd["academic_alignment"]["max_points"], 20.0)
+            self.assertEqual(bd["location_alignment"]["max_points"], 20.0)
+
+            # Explanation must flag fallback and explain the configuration
+            exp = top_rec["explanation"]
+            self.assertIsNotNone(exp["fallback_summary"])
+            self.assertIn("ENABLE_SEMANTIC_AI=False", exp["fallback_summary"])
+            self.assertEqual(exp["factors"]["semantic_similarity"]["impact_level"], "Zero Contribution")
 
     # -------------------------------------------------------------------------
     # 4. Health Check Endpoint

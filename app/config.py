@@ -3,14 +3,66 @@ Application Configuration
 Defines database paths, initial heuristic scoring weights, and system constants.
 """
 
+import os
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Set
 
 # Base paths
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 DB_PATH = DATA_DIR / "internship_engine.db"
 SCHEMA_PATH = BASE_DIR / "app" / "models" / "schema.sql"
+
+# Supported boolean representations for environment variables
+TRUTHY_VALUES: Set[str] = {"true", "1", "yes", "on", "t"}
+FALSY_VALUES: Set[str] = {"false", "0", "no", "off", "f"}
+
+
+def parse_bool_env(var_name: str, default: bool = True) -> bool:
+    """
+    Parses a boolean environment variable with explicit validation.
+
+    Supported truthy values (case-insensitive): 'true', '1', 'yes', 'on', 't'
+    Supported falsy values (case-insensitive): 'false', '0', 'no', 'off', 'f'
+
+    Args:
+        var_name: The name of the environment variable.
+        default: Default boolean value if the variable is unset or empty.
+
+    Returns:
+        bool: The parsed boolean value.
+
+    Raises:
+        ValueError: If the environment variable contains an invalid or unrecognized value.
+    """
+    raw_val = os.environ.get(var_name)
+    if raw_val is None:
+        return default
+    cleaned = raw_val.strip().lower()
+    if cleaned == "":
+        return default
+    if cleaned in TRUTHY_VALUES:
+        return True
+    if cleaned in FALSY_VALUES:
+        return False
+
+    valid_options = ", ".join(sorted(TRUTHY_VALUES | FALSY_VALUES))
+    raise ValueError(
+        f"Invalid boolean value '{raw_val}' for environment variable '{var_name}'. "
+        f"Expected one of: {valid_options}."
+    )
+
+
+def is_semantic_ai_enabled() -> bool:
+    """
+    Dynamically checks whether semantic AI is enabled via the ENABLE_SEMANTIC_AI environment variable.
+    Defaults to True if the variable is absent.
+    """
+    return parse_bool_env("ENABLE_SEMANTIC_AI", default=True)
+
+
+# Default module-level constant for static inspection
+ENABLE_SEMANTIC_AI: bool = is_semantic_ai_enabled()
 
 # Semantic AI Configuration
 SEMANTIC_MODEL_NAME: str = "sentence-transformers/all-MiniLM-L6-v2"

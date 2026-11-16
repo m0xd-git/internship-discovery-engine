@@ -7,6 +7,7 @@ and graceful degradation during model loading or encoding failures.
 =============================================================================
 """
 
+import os
 import unittest
 from unittest.mock import MagicMock, patch
 import numpy as np
@@ -14,11 +15,17 @@ import numpy as np
 from app.engine.semantic import (
     SemanticEngine,
     get_semantic_engine,
+    is_semantic_available,
     get_text_embedding,
     cosine_similarity,
     text_similarity,
 )
-from app.config import SEMANTIC_MODEL_NAME, EMBEDDING_DIMENSION
+from app.config import (
+    SEMANTIC_MODEL_NAME,
+    EMBEDDING_DIMENSION,
+    parse_bool_env,
+    is_semantic_ai_enabled,
+)
 
 
 class TestSemanticEngine(unittest.TestCase):
@@ -193,6 +200,61 @@ class TestSemanticEngine(unittest.TestCase):
         self.assertEqual(text_similarity(None, "Python"), 0.0)
         self.assertEqual(text_similarity("Python", ""), 0.0)
         self.assertEqual(text_similarity("", None), 0.0)
+
+    def test_parse_bool_env_default_and_truthy(self):
+        """parse_bool_env must default to True and parse truthy values correctly."""
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertTrue(parse_bool_env("NONEXISTENT_VAR", default=True))
+            self.assertFalse(parse_bool_env("NONEXISTENT_VAR", default=False))
+
+        truthy_inputs = ["true", "True", "TRUE", "1", "yes", "Yes", "YES", "on", "On", "ON", "t", "T"]
+        for val in truthy_inputs:
+            with patch.dict(os.environ, {"TEST_BOOL": val}):
+                self.assertTrue(parse_bool_env("TEST_BOOL"), f"Failed for truthy input '{val}'")
+
+    def test_parse_bool_env_falsy(self):
+        """parse_bool_env must parse falsy values correctly."""
+        falsy_inputs = ["false", "False", "FALSE", "0", "no", "No", "NO", "off", "Off", "OFF", "f", "F"]
+        for val in falsy_inputs:
+            with patch.dict(os.environ, {"TEST_BOOL": val}):
+                self.assertFalse(parse_bool_env("TEST_BOOL"), f"Failed for falsy input '{val}'")
+
+    def test_parse_bool_env_invalid_raises_error(self):
+        """parse_bool_env must raise ValueError with informative message on invalid input."""
+        invalid_inputs = ["maybe", "invalid", "2", "disabled", "enabled", "none", "null"]
+        for val in invalid_inputs:
+            with patch.dict(os.environ, {"TEST_BOOL": val}):
+                with self.assertRaises(ValueError) as ctx:
+                    parse_bool_env("TEST_BOOL")
+                self.assertIn("Invalid boolean value", str(ctx.exception))
+                self.assertIn("TEST_BOOL", str(ctx.exception))
+
+    def test_semantic_ai_disabled_via_env_var(self):
+        """When ENABLE_SEMANTIC_AI=false, model loading must be bypassed safely."""
+        with patch.dict(os.environ, {"ENABLE_SEMANTIC_AI": "false"}):
+            self.assertFalse(is_semantic_ai_enabled())
+            fresh_engine = SemanticEngine()
+            model = fresh_engine.get_model()
+            self.assertIsNone(model)
+            self.assertFalse(fresh_engine.is_available())
+            self.assertFalse(is_semantic_available())
+
+            # Encodings must return zero vector or None defensively
+            emb = fresh_engine.encode_text("Machine learning with Python")
+            self.assertEqual(emb.shape, (384,))
+            np.testing.assert_array_equal(emb, np.zeros(384, dtype=np.float32))
+
+            valid_emb = fresh_engine.encode_valid_text("Machine learning with Python")
+            self.assertIsNone(valid_emb)
+
+    def test_semantic_ai_disabled_skips_sentence_transformer_import(self):
+        """When disabled, get_model must return None without calling SentenceTransformer constructor."""
+        with patch.dict(os.environ, {"ENABLE_SEMANTIC_AI": "0"}):
+            fresh_engine = SemanticEngine()
+            with patch("sentence_transformers.SentenceTransformer") as mock_st:
+                model = fresh_engine.get_model()
+                self.assertIsNone(model)
+                mock_st.assert_not_called()
 
 
 if __name__ == "__main__":

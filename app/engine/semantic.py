@@ -22,7 +22,7 @@ import logging
 from typing import Optional, Dict, Any, Union
 import numpy as np
 
-from app.config import SEMANTIC_MODEL_NAME, EMBEDDING_DIMENSION
+from app.config import SEMANTIC_MODEL_NAME, EMBEDDING_DIMENSION, is_semantic_ai_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +52,13 @@ class SemanticEngine:
         Attempts to load from local cache first (offline mode). If that fails,
         falls back to standard download/load.
         
-        Returns None if loading fails, setting a flag to avoid repeated crashes.
+        Returns None if disabled via ENABLE_SEMANTIC_AI or if loading fails,
+        setting a flag to avoid repeated crashes.
         """
+        if not is_semantic_ai_enabled():
+            logger.info("SemanticEngine: Semantic AI is disabled via ENABLE_SEMANTIC_AI environment variable.")
+            return None
+
         if self._model is not None:
             return self._model
 
@@ -97,6 +102,10 @@ class SemanticEngine:
         - Embeddings are guaranteed to be 1D numpy float32 arrays of length `embedding_dim`.
         """
         zero_vec = np.zeros(self.embedding_dim, dtype=np.float32)
+
+        if not is_semantic_ai_enabled():
+            logger.warning("SemanticEngine: Semantic AI disabled via configuration; returning zero vector.")
+            return zero_vec
 
         if not text or not isinstance(text, str):
             return zero_vec
@@ -142,6 +151,9 @@ class SemanticEngine:
             model encoding succeeds with non-zero norm.
             Returns None if text is empty/invalid, model is unavailable, or encoding fails.
         """
+        if not is_semantic_ai_enabled():
+            return None
+
         if not text or not isinstance(text, str):
             return None
 
@@ -243,6 +255,12 @@ class SemanticEngine:
         """Returns the number of cached text embeddings."""
         return len(self._cache)
 
+    def is_available(self) -> bool:
+        """Returns True if semantic AI is enabled and operational."""
+        if not is_semantic_ai_enabled():
+            return False
+        return not self._model_load_failed
+
 
 # Global singleton instance for efficient application-wide reuse
 _global_semantic_engine: Optional[SemanticEngine] = None
@@ -256,6 +274,15 @@ def get_semantic_engine() -> SemanticEngine:
     if _global_semantic_engine is None:
         _global_semantic_engine = SemanticEngine()
     return _global_semantic_engine
+
+
+def is_semantic_available() -> bool:
+    """
+    Returns True if semantic AI is enabled and operational in the current environment.
+    """
+    if not is_semantic_ai_enabled():
+        return False
+    return get_semantic_engine().is_available()
 
 
 def get_text_embedding(text: Optional[str], use_cache: bool = True) -> np.ndarray:

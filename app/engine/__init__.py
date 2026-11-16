@@ -57,6 +57,7 @@ from app.engine.scorer import (
 from app.engine.semantic import (
     SemanticEngine,
     get_semantic_engine,
+    is_semantic_available,
     get_text_embedding,
     cosine_similarity,
     text_similarity,
@@ -85,6 +86,7 @@ __all__ = [
     "calculate_semantic_similarity_score",
     "SemanticEngine",
     "get_semantic_engine",
+    "is_semantic_available",
     "get_text_embedding",
     "cosine_similarity",
     "text_similarity",

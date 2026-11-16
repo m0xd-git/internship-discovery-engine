@@ -7,6 +7,7 @@ boundary clamping, missing profile data, empty requirements, and weight validati
 All tests use in-memory dataclass instances; no persistent database rows are modified.
 """
 
+import os
 import unittest
 from unittest.mock import patch
 from app.config import DEFAULT_SCORING_WEIGHTS, SEMANTIC_ACTIVE_SCORING_WEIGHTS
@@ -538,6 +539,54 @@ class TestSemanticScoringIntegration(unittest.TestCase):
             2,
         )
         self.assertEqual(points_sum, rec.total_score)
+
+    def test_semantic_ai_disabled_via_env_var_triggers_fallback(self):
+        """When ENABLE_SEMANTIC_AI=false, scoring must rebalance to baseline weights without semantic points."""
+        with patch.dict(os.environ, {"ENABLE_SEMANTIC_AI": "false"}):
+            rec = score_internship(self.student, self.internship, use_semantic=True)
+
+            self.assertTrue(rec.eligibility.is_eligible)
+            bd = rec.score_breakdown
+            sem = bd.semantic_similarity
+
+            # Verify semantic breakdown indicates explicit disabled configuration
+            self.assertTrue(sem["fallback_applied"])
+            self.assertEqual(sem["fallback_reason"], "Semantic AI disabled via configuration (ENABLE_SEMANTIC_AI=False).")
+            self.assertEqual(sem["qualitative_label"], "Disabled via configuration")
+            self.assertEqual(sem["points"], 0.0)
+            self.assertEqual(sem["max_points"], 0.0)
+            self.assertEqual(sem["weight"], 0.0)
+
+            # Baseline weights must be active: 45% req, 15% pref, 20% acad, 20% loc
+            self.assertEqual(bd.required_skills["max_points"], 45.0)
+            self.assertEqual(bd.preferred_skills["max_points"], 15.0)
+            self.assertEqual(bd.academic_alignment["max_points"], 20.0)
+            self.assertEqual(bd.location_alignment["max_points"], 20.0)
+
+            # Total score must equal sum of 4 baseline heuristic factors
+            expected_total = round(
+                bd.required_skills["points"]
+                + bd.preferred_skills["points"]
+                + bd.academic_alignment["points"]
+                + bd.location_alignment["points"],
+                2,
+            )
+            self.assertEqual(rec.total_score, expected_total)
+
+            # Explanation must flag fallback and explain that semantic AI is disabled
+            self.assertIsNotNone(rec.explanation.fallback_summary)
+            self.assertIn("Semantic AI disabled via configuration", rec.explanation.fallback_summary)
+            self.assertEqual(rec.explanation.factors["semantic_similarity"].impact_level, "Zero Contribution")
+            self.assertEqual(rec.explanation.factors["semantic_similarity"].weight_percentage, 0.0)
+
+    def test_generate_recommendations_when_semantic_disabled(self):
+        """generate_recommendations must produce cleanly sorted recommendations with fallback when semantic AI is disabled."""
+        with patch.dict(os.environ, {"ENABLE_SEMANTIC_AI": "0"}):
+            eligible, ineligible = generate_recommendations(self.student, [self.internship], use_semantic=True)
+            self.assertEqual(len(eligible), 1)
+            self.assertEqual(len(ineligible), 0)
+            self.assertTrue(eligible[0].score_breakdown.semantic_similarity["fallback_applied"])
+            self.assertEqual(eligible[0].score_breakdown.required_skills["max_points"], 45.0)
 
 
 if __name__ == "__main__":

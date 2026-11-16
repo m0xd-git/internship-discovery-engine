@@ -28,6 +28,7 @@ from app.config import (
     DEFAULT_SCORING_WEIGHTS,
     SEMANTIC_ACTIVE_SCORING_WEIGHTS,
     validate_weights,
+    is_semantic_ai_enabled,
 )
 from app.models.entities import Student, Internship
 from app.models.results import (
@@ -284,6 +285,21 @@ def calculate_semantic_similarity_score(
         }
         return 0.0, 0.0, breakdown_data, True, None
 
+    if not is_semantic_ai_enabled():
+        reason = "Semantic AI disabled via configuration (ENABLE_SEMANTIC_AI=False)."
+        breakdown_data = {
+            "points": 0.0,
+            "max_points": max_points,
+            "weight": weight,
+            "raw_similarity": 0.0,
+            "qualitative_label": "Disabled via configuration",
+            "details": f"Semantic encoding bypassed: {reason}",
+            "fallback_applied": True,
+            "fallback_reason": reason,
+            "notice": SEMANTIC_NOTICE,
+        }
+        return 0.0, max_points, breakdown_data, False, reason
+
     # 1. Deterministic Text Construction (Adjustment 1)
     s_text = build_student_semantic_text(student)
     j_text = build_internship_semantic_text(internship)
@@ -313,14 +329,22 @@ def calculate_semantic_similarity_score(
     vec_j = engine.encode_valid_text(j_text)
 
     if vec_s is None or vec_j is None:
-        reason = "Semantic model unavailable or produced an invalid embedding vector."
+        if not is_semantic_ai_enabled():
+            reason = "Semantic AI disabled via configuration (ENABLE_SEMANTIC_AI=False)."
+            qual_label = "Disabled via configuration"
+            details = f"Semantic encoding bypassed: {reason}"
+        else:
+            reason = "Semantic model unavailable or produced an invalid embedding vector."
+            qual_label = "Minimal contextual alignment"
+            details = f"Semantic encoding failed: {reason}"
+
         breakdown_data = {
             "points": 0.0,
             "max_points": max_points,
             "weight": weight,
             "raw_similarity": 0.0,
-            "qualitative_label": "Minimal contextual alignment",
-            "details": f"Semantic encoding failed: {reason}",
+            "qualitative_label": qual_label,
+            "details": details,
             "fallback_applied": True,
             "fallback_reason": reason,
             "notice": SEMANTIC_NOTICE,

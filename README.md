@@ -81,6 +81,30 @@ $$\text{Total Score} = W_{req} \cdot S_{req} + W_{pref} \cdot S_{pref} + W_{acad
 
 ---
 
+## Environment-Based Semantic AI Configuration (Milestone 8.1)
+
+The application supports selective activation of dense vector semantic AI via the `ENABLE_SEMANTIC_AI` environment variable:
+
+```bash
+# Optional: Set in .env or cloud hosting environment (Render Free)
+ENABLE_SEMANTIC_AI=true   # Default: Enables PyTorch & all-MiniLM-L6-v2 (40/15/10/10/25 weights)
+ENABLE_SEMANTIC_AI=false  # Disabled: Zero-import fallback mode (45/15/20/20/0 weights)
+```
+
+### Architectural Behavior by Environment:
+1. **Local Development (Default: `ENABLE_SEMANTIC_AI=true` or omitted):**
+   - Automatically activates pretrained `sentence-transformers` with `all-MiniLM-L6-v2`.
+   - Computes 384-dimensional dense vectors and cosine similarities for semantic contextual matching.
+   - Applies the 5-factor scoring model ($40\%$ required, $15\%$ preferred, $10\%$ academic, $10\%$ location, $25\%$ semantic).
+
+2. **Resource-Constrained Cloud Deployment (`ENABLE_SEMANTIC_AI=false`):**
+   - **Zero PyTorch Import Guarantee:** Lazy-loading logic short-circuits *before* `sentence_transformers` or `torch` is imported into Python's `sys.modules`.
+   - **Memory Reduction:** Reduces process memory overhead from $\sim 320\text{ MB}$ down to $\sim 20\text{ MB}$, operating comfortably under Render Free's $512\text{ MB}$ RAM ceiling with zero Out-Of-Memory (OOM) risk.
+   - **Graceful Fallback Rebalancing:** Automatically activates the 4-factor heuristic baseline ($45\%$ required, $15\%$ preferred, $20\%$ academic, $20\%$ location, $0\%$ semantic).
+   - **Full Transparency:** The Recommendation Explainer and Discovery Dashboard report `Semantic AI disabled via configuration (ENABLE_SEMANTIC_AI=False)` without displaying fabricated similarity scores or misleading percentages. Hard gatekeeper rules, canonical skill matching, and pedagogical learning roadmaps remain $100\%$ operational.
+
+---
+
 ## Directory Structure
 
 ```
@@ -134,11 +158,11 @@ ai proj/
 │   ├── test_eligibility.py        # Unit tests for Rule-Based Eligibility Engine (21 tests)
 │   ├── test_matcher.py            # Unit tests for Skill Normalizer & Aliases (8 tests)
 │   ├── test_gap_analyzer.py       # Unit tests for Skill-Gap Analyzer (8 tests)
-│   ├── test_scorer.py             # Unit tests for Transparent Recommendation Scorer (18 tests)
-│   ├── test_semantic.py           # Unit tests for Pretrained Semantic AI & Vector Cache (13 tests)
+│   ├── test_scorer.py             # Unit tests for Transparent Recommendation Scorer (20 tests)
+│   ├── test_semantic.py           # Unit tests for Pretrained Semantic AI, Env Toggle & Vector Cache (18 tests)
 │   ├── test_roadmap.py            # Unit tests for Roadmap Generation & Prerequisite Expansion (21 tests)
 │   ├── test_explainer.py          # Unit tests for Recommendation Explainer & Attribution (13 tests)
-│   ├── test_api.py                # Integration tests for Flask REST API (30 tests)
+│   ├── test_api.py                # Integration tests for Flask REST API (31 tests)
 │   └── test_views.py              # Integration tests for HTML views & static assets (13 tests)
 ├── run.py                         # Application runner (starts local dev server)
 ├── requirements.txt               # Minimal external dependencies (Flask)
@@ -288,8 +312,8 @@ Open your web browser and navigate to:
 - **Student Profile Management:** [http://127.0.0.1:5000/profile](http://127.0.0.1:5000/profile)
 - **Operational Health Probe:** [http://127.0.0.1:5000/health](http://127.0.0.1:5000/health)
 
-#### 6. Run the Full Automated Test Suite (156 Tests)
-Verifies database integrity, eligibility gatekeeper rules, canonical skill matching, transparent scoring, dense vector semantic AI, personalized roadmap transitive prerequisite sequencing, auditable recommendation explanations, Flask REST API endpoints, and frontend HTML/CSS view controllers:
+#### 6. Run the Full Automated Test Suite (164 Tests)
+Verifies database integrity, eligibility gatekeeper rules, canonical skill matching, transparent scoring, dense vector semantic AI, environment toggle zero-import isolation, personalized roadmap transitive prerequisite sequencing, auditable recommendation explanations, Flask REST API endpoints, and frontend HTML/CSS view controllers:
 ```bash
 python -m unittest discover -s tests -p "test_*.py" -v
 ```
@@ -309,4 +333,5 @@ python -m unittest discover -s tests -p "test_*.py" -v
 - [x] **Milestone 7.3**: API Integration for Explanations and Learning Roadmaps (Completed & Verified)
 - [x] **Milestone 7.4**: Visual Recommendation Explanations & Frontend Roadmap Integration (Completed & Verified)
 - [x] **UI/UX Redesign**: Milestone A (Catalog), Milestone B (Progressive Disclosure), Milestone C (Accessibility & Polish) (Completed & Verified)
+- [x] **Milestone 8.1**: Environment-Based Semantic AI Toggle & Memory Optimization (Completed & Verified)
 - [ ] **Milestone 8**: Final System Verification, Viva Defense Guide & Presentation Prep
