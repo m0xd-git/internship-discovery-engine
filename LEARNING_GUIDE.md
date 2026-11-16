@@ -945,24 +945,777 @@ OK
 
 ---
 
-### 7. Check Your Understanding Exercise
+---
+
+## Milestone 6: Pretrained Semantic AI, Dense Embeddings & Cosine Similarity
+
+### 1. Plain English Problem Explanation
+In Milestones 1–5, our system matched skills using **canonical string normalization and aliases** (e.g., recognizing that `postgres` means `PostgreSQL`). 
+
+However, natural language in student resumes and internship listings is messy and diverse. An employer might write:
+> *"Seeking candidates experienced in building predictive models and data analysis with Python."*
+
+While a student might list on their profile:
+> *"Machine learning and predictive analytics using Python."*
+
+To a traditional rule-based exact string matcher, these two sentences share only the single word *"Python"*—meaning an exact keyword system would judge them as mostly mismatched! 
+
+To bridge this vocabulary gap without hardcoding thousands of manual rules, we introduce **Semantic AI** using **Sentence Transformers** and the pretrained neural model **`all-MiniLM-L6-v2`**.
+
+---
+
+### 2. Core Concepts You Need to Understand
+
+#### Concept A: What is a Dense Vector Embedding?
+- A **word or sentence embedding** is a numerical representation of text as an array (vector) of floating-point numbers.
+- In our model (`all-MiniLM-L6-v2`), every piece of text is translated into a **384-dimensional vector**:
+  $$\mathbf{v} = [v_1, v_2, v_3, \dots, v_{384}]$$
+- In this 384-dimensional mathematical space, **geometric proximity equals semantic similarity**. Sentences with similar meanings are placed close to each other, even if they use completely different vocabulary.
+
+#### Concept B: How Does `all-MiniLM-L6-v2` Work?
+- **Architecture:** It is based on a distilled BERT-like Transformer architecture (MiniLM) with 6 layers, 384 hidden dimensions, and 12 attention heads.
+- **Size and Speed:** With only ~22.7 million parameters and an ~80 MB file size, it is designed for ultra-fast CPU inference (< 25 ms per sentence).
+- **Pretraining & Contrastive Learning:** The model was trained on over 1 billion sentence pairs using **contrastive learning**, teaching the neural network to pull semantically related sentences close together while pushing unrelated sentences far apart.
+
+#### Concept C: What is Cosine Similarity?
+When comparing two 384-dimensional vectors $\mathbf{u}$ and $\mathbf{v}$, we measure the angle $\theta$ between them using the **Cosine Similarity** formula:
+
+$$\text{Cosine Similarity}(\mathbf{u}, \mathbf{v}) = \cos(\theta) = \frac{\mathbf{u} \cdot \mathbf{v}}{\|\mathbf{u}\|_2 \|\mathbf{v}\|_2} = \frac{\sum_{i=1}^{384} u_i v_i}{\sqrt{\sum_{i=1}^{384} u_i^2} \sqrt{\sum_{i=1}^{384} v_i^2}}$$
+
+- **Why Cosine Similarity instead of Euclidean Distance?**
+  Euclidean distance measures the physical distance between two coordinate points, which is sensitive to vector length (sentence length). Cosine similarity measures the **directional alignment** (the angle) between vectors regardless of magnitude, making it invariant to text length.
+- **Output Range:**
+  - $+1.0$: Exactly identical semantic direction ($0^\circ$ angle).
+  - $0.0$: Completely orthogonal (unrelated concepts, $90^\circ$ angle).
+  - $-1.0$: Exactly opposite semantic direction ($180^\circ$ angle).
+
+#### Concept E: How the Semantic Engine & Embedding Cache Work (`app/engine/semantic.py`)
+To keep our system fast and decoupled, Milestone 6.4 introduces the `SemanticEngine` module:
+1. **Lazy Model Loading (`get_model`):** The model is not loaded at application startup, which keeps server boots instant. It is loaded only when the first embedding request arrives.
+2. **Local Cache Priority:** It attempts loading with `local_files_only=True` first, guaranteeing that the model runs offline from `~/.cache/huggingface/hub/` without hitting external network endpoints.
+3. **In-Memory Embedding Cache (`_cache`):**
+   - Generating 384-dimensional embeddings via Transformer forward passes requires floating-point operations.
+   - Job descriptions and skill names are frequently repeated across student evaluations.
+   - The engine maintains an in-memory dictionary `_cache: Dict[str, np.ndarray]`.
+   - When `encode_text(text, use_cache=True)` is called, it checks `if text in self._cache: return self._cache[text].copy()`.
+   - If present, inference is bypassed completely (**0.0 ms execution**).
+4. **Defensive Graceful Degradation:**
+   - If text is `None`, empty, or invalid, `encode_text` returns a safe zero vector `np.zeros(384, dtype=np.float32)` rather than crashing.
+   - If the model fails to load, `_model_load_failed` is set to `True`, logging a warning and returning zero vectors.
+   - `compute_cosine_similarity` checks for zero vectors and returns `0.0`, ensuring the pipeline never throws division-by-zero errors.
+
+#### Concept F: Why Semantic Matching is Strictly Separated from Exact Skill Matching
+A common pitfall in junior AI systems is merging keyword matching and vector search into a single "fuzzy" step. Our architecture enforces a clean separation of concerns:
+- **`app/engine/matcher.py` (Rule-Based Exact Matcher):**
+  - Produces the **Skill-Gap Report** (`matched_required_skills`, `missing_required_skills`).
+  - Employers and students require deterministic proof: *Did I list Python? Yes or No?*
+  - An AI embedding should never hallucinate that a student has "Docker" when they only know "Kubernetes".
+- **`app/engine/semantic.py` (Vector Semantic Engine):**
+  - Measures broader **conceptual and domain affinity**.
+  - Analyzes the overarching narrative of a student's background against the complete internship mission and responsibilities.
+  - Complements, but never pollutes, the exact skill gap checklist.
+
+---
+
+### 3. Empirical Verification Results (Milestone 6.3 & 6.4)
+
+During our automated model verification, we tested three benchmark sentences:
+- **Sentence A:** *"Machine learning and predictive analytics using Python"*
+- **Sentence B:** *"Building predictive models and data analysis with Python"*
+- **Sentence C:** *"Frontend web development using HTML and CSS"*
+
+#### Measured Properties:
+- **Embedding Dimensions:** Exactly 384 dimensions for all sentences.
+- **Value Integrity:** 100% finite numerical values (no NaNs, no infinities).
+- **L2 Vector Norms:** Normalized to $1.0000$.
+
+#### Measured Cosine Similarities:
+
+| Compared Pairs | Description | Cosine Similarity | Match Percentage | Interpretation |
+| :--- | :--- | :---: | :---: | :--- |
+| **Sentence A $\leftrightarrow$ Sentence B** | ML/Analytics vs. Predictive/Data in Python | **0.7938** | **79.4%** | **Strong Semantic Match:** Paraphrased concepts in the same domain. |
+| **Sentence A $\leftrightarrow$ Sentence C** | ML/Analytics vs. Frontend HTML/CSS | **0.0087** | **0.9%** | **Orthogonal / Disconnected:** Unrelated technical specializations. |
+| **Sentence B $\leftrightarrow$ Sentence C** | Predictive Models vs. Frontend HTML/CSS | **0.0730** | **7.3%** | **Near-Zero Match:** No meaningful domain overlap. |
+
+**Key Invariant Confirmed:**
+$$\text{Similarity}(A, B) = 0.7938 \gg \text{Similarity}(A, C) = 0.0087$$
+
+---
+
+### 4. Running the Semantic & Full Test Suite
+
+#### Running the Dedicated Semantic Unit Tests (13 Tests):
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_semantic.py" -v
+```
+
+#### Running the Full Automated System Test Suite (96 Tests):
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py" -v
+```
+
+```text
+test_api.py:          18 passing tests (REST API endpoints & SQLite transactions)
+test_db.py:           11 passing tests (Database schema, constraints & dataclasses)
+test_eligibility.py:  21 passing tests (Rule-based gatekeeper & boundary checks)
+test_gap_analyzer.py:  8 passing tests (Skill-gap categorization & deduplication)
+test_matcher.py:       8 passing tests (Skill normalizer, aliases & symbol preservation)
+test_scorer.py:       12 passing tests (Transparent multi-factor scoring & segregation)
+test_semantic.py:     13 passing tests (Dense embeddings, 384-dim shape, cosine math & caching)
+test_views.py:         5 passing tests (HTML template rendering & static asset serving)
+----------------------------------------------------------------------
+Ran 96 tests in 9.613s
+
+OK
+```
+
+---
+
+### 5. Sample Viva Questions & Model Answers
+
+**Q1: What is the difference between exact skill matching and semantic similarity in your architecture?**
+> *Model Answer:* Exact matching (in `matcher.py`) is deterministic, rule-based, and relies on canonical tokenization and an alias dictionary (e.g., `postgres` $\rightarrow$ `PostgreSQL`). It provides auditable, zero-hallucination skill-gap reports. Semantic similarity (using Sentence Transformers) computes dense vector cosine similarity across descriptions, capturing conceptual and contextual alignment that rule-based dictionaries miss (e.g., recognizing that "predictive modeling" is related to "machine learning").
+
+**Q2: Why did you choose `all-MiniLM-L6-v2` instead of a larger model like BERT or a cloud-hosted LLM API?**
+> *Model Answer:* `all-MiniLM-L6-v2` is an optimal engineering choice for candidate recommendation:
+> 1. **Zero External API Cost & Privacy:** Inference runs completely locally on CPU with no recurring API costs or student data leakage.
+> 2. **Ultra-lightweight:** At ~80 MB and 22.7M parameters, it runs with < 25 ms latency on standard college laptops without requiring a dedicated GPU.
+> 3. **High Performance:** It retains > 95% of the semantic retrieval quality of full-sized BERT models while using a fraction of the memory.
+
+**Q3: Can a high semantic similarity score override a student failing an academic requirement?**
+> *Model Answer:* No. Strict eligibility gatekeeping is a non-negotiable invariant in our architecture. If a student fails a mandatory constraint (such as minimum CGPA or accepted major), the eligibility gatekeeper immediately marks the candidate ineligible and sets the `total_score` strictly to `0.0`, regardless of how high the semantic text similarity is.
+
+**Q4: How does the model function offline once downloaded?**
+> *Model Answer:* Hugging Face Hub caches model weights, configuration, and tokenizer vocabularies locally in `~/.cache/huggingface/hub/`. In `verify_model.py`, we confirmed that passing `local_files_only=True` successfully loads the model without requiring any active internet connection.
+
+---
+
+### 5. Check Your Understanding Exercise
 
 **Question:**
-When a student visits `/profile` directly from the navigation bar (without query parameters), how does the page handle profile selection?
-
-1. What API call does `profile.js` make on page load?
-2. Which profile is initially loaded into the form?
-3. How can the user switch to creating a brand new student?
-
-*(Self-check your answer before checking the answer key below!)*
+Suppose two sentences have an embedding cosine similarity of $0.85$.
+1. What does this number tell us geometrically about their 384-dimensional vectors?
+2. If Student X has a semantic similarity of $0.90$ with an internship, but their CGPA is $2.8$ against a mandatory cutoff of $3.2$, what is their final recommendation score?
 
 <details>
 <summary><b>Click to reveal Answer Key</b></summary>
 
-1. **`API.getStudents()`** is called to retrieve all registered student profiles.
-2. The dropdown (`profileStudentSelect`) is populated with all registered students, and the first student (e.g. Aarav Sharma, ID 1) is automatically loaded via **`API.getStudent(studentId)`**, populating all form inputs and skill tags.
-3. The user can either select **`+ Create New Student Profile...`** from the dropdown or click the dedicated **`+ Create New Student`** button, which clears the form, sets `currentEditingStudentId = null`, and switches the mode banner to **New Profile**.
+1. Geometrically, a cosine similarity of $0.85$ means the angle $\theta$ between the two vectors in 384-dimensional space is small ($\theta \approx \arccos(0.85) \approx 31.8^\circ$), indicating that the vectors point in nearly the same directional orientation (strong conceptual alignment).
+2. Their final recommendation score is strictly **0.0 (Disqualified)**. Because eligibility is a hard gatekeeper, no amount of semantic similarity or skill alignment can override a failed mandatory CGPA threshold.
 </details>
+
+---
+
+## Milestone 6.5: Genuine Pretrained Semantic AI Recommendation Scoring Integration
+
+### 1. Plain English Problem Explanation
+In earlier milestones, our recommendation scoring relied entirely on hard heuristic factors (exact skill counts, academic cutoff headroom, and location match). While effective, keyword matching misses synonyms and conceptual relationships—for example, a student whose profile highlights "deep neural networks and predictive analytics" wouldn't receive credit for an internship seeking "machine learning" unless the exact keyword appeared.
+
+In Milestone 6.5, we integrate the genuine pretrained Transformer model (`all-MiniLM-L6-v2`) directly into the recommendation engine. The system synthesizes deterministic representations of both student profiles and internship listings, computes cosine similarity across dense 384-dimensional vectors, and attributes a transparent 25-point semantic alignment factor.
+
+---
+
+### 2. Core Concepts You Need to Understand
+
+#### Concept A: Mathematical Scoring Formulation
+When Semantic AI is active, the engine reallocates weights so that the total score remains on a normalized 100-point scale:
+
+$$\text{Total Match Score} = 0.40 \cdot S_{\text{req}} + 0.15 \cdot S_{\text{pref}} + 0.10 \cdot S_{\text{acad}} + 0.10 \cdot S_{\text{loc}} + 0.25 \cdot S_{\text{sem}}$$
+
+Where:
+- $S_{\text{req}} = \left(\frac{\text{Matched Required}}{\text{Total Required}}\right) \times 100$ (up to $40.0$ points)
+- $S_{\text{pref}} = \left(\frac{\text{Matched Preferred}}{\text{Total Preferred}}\right) \times 100$ (up to $15.0$ points)
+- $S_{\text{acad}} = \text{Major Relevance } (6.0\text{ pts}) + \text{CGPA Margin Headroom } (4.0\text{ pts})$ (up to $10.0$ points)
+- $S_{\text{loc}} = \text{Work Mode Fit } (5.0\text{ pts}) + \text{Geographic Proximity } (5.0\text{ pts})$ (up to $10.0$ points)
+- $S_{\text{sem}} = \max\left(0.0, \min(1.0, \cos(\vec{u}_{\text{student}}, \vec{v}_{\text{internship}}))\right) \times 25.0$ (up to $25.0$ points)
+
+$$\text{Total Maximum Score} = 40.0 + 15.0 + 10.0 + 10.0 + 25.0 = 100.0\text{ points}$$
+
+#### Concept B: Deterministic Text Synthesis (Adjustment 1)
+To ensure reliable embeddings and avoid noisy or hallucinated vectors:
+1. **Primary Focus:** Claimed student technical skills, internship required skills, preferred skills, and core role responsibilities.
+2. **Secondary Context:** Academic major, student bio summary, role title, and organization domain.
+3. **No Boilerplate:** Avoid arbitrary corporate filler phrases ("fast-paced environment", "team player") that artificially inflate cosine similarity between unrelated listings.
+4. **Substantive Content Guard:** If a student lacks both skills and bio summary, or an internship lacks both skills and description, the generator returns an empty string to trigger fallback rebalancing rather than encoding meaningless strings.
+
+#### Concept C: Accurate Non-Probability Terminology (Adjustment 2)
+A critical pitfall in AI applications is misrepresenting cosine similarity as a probability or percentage match:
+- **What Cosine Similarity Is:** A geometric measure of orientation between two vectors in 384-dimensional embedding space:
+  $$\cos(\theta) = \frac{\vec{u} \cdot \vec{v}}{\|\vec{u}\| \|\vec{v}\|}$$
+- **What It Is NOT:** It is NOT a hiring probability, nor does $\cos(\theta) = 0.8240$ mean the candidate possesses "82.4% of the skills."
+- **How We Report It:** We expose:
+  1. **Raw Cosine Similarity:** e.g., `0.8240` (rounded to 4 decimal places).
+  2. **Semantic Contribution Points:** e.g., `20.60 / 25.00 pts`.
+  3. **Qualitative Alignment Band:** Plain-language interpretation:
+     - $\ge 0.75$: *Strong contextual alignment*
+     - $\ge 0.50$: *Moderate contextual alignment*
+     - $\ge 0.25$: *Low contextual alignment*
+     - $< 0.25$: *Minimal contextual alignment*
+  4. **Non-Probability Notice:** *"Semantic AI measures contextual and vocabulary alignment between profiles using all-MiniLM-L6-v2 embeddings. It does not certify individual skill competence."*
+
+#### Concept D: Graceful Fallback Rebalancing (Adjustment 3)
+If the Transformer model cannot load, text encoding fails, or a student profile has no skills or bio text:
+1. The engine automatically falls back to baseline heuristic weights (`DEFAULT_SCORING_WEIGHTS`):
+   $$\text{Fallback Weights: } 45\% \text{ required}, 15\% \text{ preferred}, 20\% \text{ academic}, 20\% \text{ location}, 0\% \text{ semantic}$$
+2. The remaining 4 factors are recomputed out of 100 points, guaranteeing the candidate is evaluated fairly on a complete 100-point scale.
+3. The score breakdown explicitly flags `fallback_applied = True` and records an auditable `fallback_reason`.
+4. Zero vectors or unverified values never award unearned points.
+
+#### Concept E: Strict Eligibility Gatekeeping Invariant
+The Rule-Based Eligibility Gatekeeper **always runs before any semantic encoding**:
+- If an applicant fails CGPA, major, or work mode cutoffs, `total_score` is set strictly to `0.0`.
+- Semantic text encoding is **never invoked** for disqualified candidates.
+- This protects CPU resources and prevents high semantic similarity from overriding mandatory constraints.
+
+---
+
+### 3. File Responsibilities in Milestone 6.5
+
+| File | Changes Made | Architectural Purpose |
+| :--- | :--- | :--- |
+| `app/engine/semantic.py` | Added `build_student_semantic_text()`, `build_internship_semantic_text()`, `get_semantic_qualitative_label()`, and `encode_valid_text()`. | Deterministic text synthesis, qualitative banding, and vector validation. |
+| `app/engine/scorer.py` | Implemented `calculate_semantic_similarity_score()`, integrated semantic component into `score_internship()`, added fallback rebalancing to 45/15/20/20. | Multi-factor mathematical scoring and fallback orchestration. |
+| `app/engine/__init__.py` | Exported semantic functions and constants. | Clean facade package interface. |
+| `app/routes/api.py` | Updated `/api/recommend` to pass `use_semantic=True`. | Exposes semantic scoring to REST API consumers and frontend. |
+| `app/static/js/dashboard.js` | Updated accordion to render 5 factors dynamically with qualitative badges, raw cosine similarity, and notices. | Transparent user-facing explainability. |
+| `tests/test_scorer.py` | Added `TestSemanticScoringIntegration` (6 comprehensive tests). | Verifies active scoring, outscoring, fallback, gatekeeping, and arithmetic sums. |
+| `tests/test_api.py` | Added `test_recommend_endpoint_includes_semantic_breakdown`. | Verifies REST API breakdown payload completeness. |
+
+---
+
+### 4. Running the Full Automated Test Suite (103 Tests)
+
+Test command:
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py" -v
+```
+
+Execution output:
+```text
+test_api.py:          19 passing tests (REST API endpoints, dynamic discovery, semantic breakdown)
+test_db.py:           11 passing tests (Database schema, constraints & dataclasses)
+test_eligibility.py:  21 passing tests (Rule-based gatekeeper & boundary checks)
+test_gap_analyzer.py:  8 passing tests (Skill-gap categorization & deduplication)
+test_matcher.py:       8 passing tests (Skill normalizer, aliases & symbol preservation)
+test_scorer.py:       18 passing tests (Transparent multi-factor scoring, semantic AI, fallback rebalancing)
+test_semantic.py:     13 passing tests (Dense embeddings, 384-dim shape, cosine math & caching)
+test_views.py:         5 passing tests (HTML template rendering & static asset serving)
+----------------------------------------------------------------------
+Ran 103 tests in 43.556s
+
+OK
+```
+
+---
+
+### 5. Milestone 6.5 Sample Viva Questions & Model Answers
+
+**Q1: How do you prevent semantic AI from awarding points to an unqualified candidate?**
+> *Model Answer:* Through our **Hard Eligibility Gatekeeper**. The gatekeeper evaluates non-negotiable constraints (minimum CGPA, accepted academic majors, graduation year, and work mode compatibility) before any scoring occurs. If a student fails even a single requirement, the system immediately returns a total score of 0.0 and short-circuits. The semantic encoding method is never even called, ensuring that semantic similarity can never compensate for failed eligibility.
+
+**Q2: Why do you avoid displaying cosine similarity as a "percentage match"?**
+> *Model Answer:* Cosine similarity measures the geometric angle between two high-dimensional vectors in a learned continuous representation space. It reflects semantic and vocabulary co-occurrence in the training corpus, not the proportion of requirements fulfilled. Calling 0.8240 an "82.4% match" is misleading because it implies probabilistic confidence or exact skill possession. Instead, we display the raw cosine value (0.8240), the earned points (20.60 / 25), a qualitative interpretation ("Strong contextual alignment"), and an explicit non-probability notice.
+
+**Q3: What happens if the Transformer model fails to load in production?**
+> *Model Answer:* The recommendation engine implements **Defensive Fallback Rebalancing**. If the model fails or produces an invalid vector, the system dynamically rebalances the scoring weights back to our verified baseline heuristic weights (45% required skills, 15% preferred skills, 20% academic alignment, 20% location match, 0% semantic AI). The total score remains normalized to 100 points, `fallback_applied` is set to `True`, the exact reason is recorded, and the application continues serving recommendations without interruption.
+
+---
+
+## Milestone 7.1: Pedagogical Learning Roadmap Engine & Prerequisite Graph Modeling
+
+### 1. Plain English Problem Explanation
+In Milestones 1–6, our system identified a student's missing competencies as a flat checklist (e.g., *"Missing Required: Docker, Python; Missing Preferred: PyTorch"*).
+
+However, an unstructured list of gaps is overwhelming and unhelpful for a student:
+- If a student tries to learn **PyTorch** before learning **Python**, they will quickly get frustrated because modern deep learning libraries assume fluency in object-oriented Python, generators, and vector math.
+- If a student tries to learn **React** before learning basic **JavaScript** and **HTML/CSS**, they will struggle with DOM manipulation and state.
+- If a student spends weeks on an optional bonus skill (preferred) while ignoring a non-negotiable prerequisite (mandatory), they remain disqualified.
+
+**Milestone 7.1 solves this by generating a personalized, deterministic learning roadmap.** It transforms missing skills into ordered, step-by-step phases, provides concrete learning focuses and practical project milestones, and calculates transparent, self-paced time estimates.
+
+Importantly:
+1. We **never hallucinate external course links, commercial certifications, or paywalled platforms**. The roadmap remains platform-agnostic, objective, and self-contained.
+2. We **never claim a student cannot perform a skill**; missing skills merely reflect an absence from the profile.
+3. We **never guarantee completion times**; all durations are presented as approximate self-study estimates.
+
+---
+
+### 2. Core Concepts You Need to Understand
+
+#### Concept A: Directed Acyclic Graphs (DAGs) & Topological Sorting
+- **What is a Dependency Graph?** In computer science, dependencies between tasks can be represented as a **Directed Graph**, where each vertex (node) represents a skill, and a directed edge $u \to v$ indicates that skill $u$ is a prerequisite for skill $v$.
+- **Why Acyclic?** If skill A requires skill B, and skill B requires skill A, a **cycle** exists. A system attempting to resolve dependencies would loop indefinitely. A valid learning progression must be a **Directed Acyclic Graph (DAG)**.
+- **Topological Sorting:** An algorithm that produces a linear ordering of vertices such that for every directed edge $u \to v$, vertex $u$ appears before vertex $v$ in the sequence.
+- **Cycle Detection via 3-Color DFS:**
+  In `app/engine/roadmap.py`, our topological sorter employs a 3-color Depth-First Search:
+  - **Color 0 (White/Unvisited):** The skill has not been examined yet.
+  - **Color 1 (Gray/Visiting):** The skill is currently on the active recursion call stack. If the DFS encounters a neighbor that is already Color 1, a **cycle** is detected! The engine breaks the cycle cleanly without entering an infinite loop.
+  - **Color 2 (Black/Visited):** The skill and all its dependencies have been fully evaluated.
+
+#### Concept B: Mandatory vs. Preferred Prioritization
+- Missing skills are classified into two distinct importance tiers:
+  1. **Mandatory Missing Requirements (High Priority):** These are hard requirements listed by the employer. Failing to possess them guarantees a low match score. They are sequenced into **Phase 1 (Critical Foundation)** and **Phase 2 (Core Requirements)**.
+  2. **Preferred Growth Opportunities (Medium Priority):** These are bonus skills that give candidates a competitive edge. They are sequenced into **Phase 3 (Growth Opportunities)** and only tackled after core requirements are mastered.
+
+#### Concept C: The Possessed Prerequisite Guard
+- Consider a student who already possesses **Python** and is applying for an internship requiring **PyTorch**.
+- While our pedagogical knowledge base defines `prerequisites = ["Python"]` for PyTorch, the student *already knows Python*.
+- Our engine checks `norm_p not in possessed_skills_norm`. Because the student already has Python, Python is **not** re-scheduled as a missing learning step.
+- Prerequisite ordering is strictly applied when **both** the prerequisite and the dependent skill are missing (e.g. if the student lacks both Python and PyTorch, Python is sequenced first).
+
+#### Concept D: Interview Readiness for Fully Qualified Candidates (`is_fully_qualified=True`)
+- If a candidate already matches 100% of required and preferred skills, naive systems report *"No gaps found"* and output an empty roadmap.
+- This creates the false impression that the student has nothing left to do.
+- In our system, fully qualified students receive an **Interview Readiness & Portfolio Optimization** phase covering:
+  - Technical mock interview preparation and algorithmic problem solving.
+  - System architecture communication and trade-off explanations.
+  - Live code demonstration and GitHub portfolio documentation.
+
+#### Concept E: Graceful Fallback for Unknown / Custom Skills
+- If an employer lists an emerging or niche skill not in the 21 canonical entries (e.g., *"Quantum Computing"* or *"Solidity"*), the system must never crash.
+- `get_skill_pedagogy()` implements a deterministic fallback template:
+  - Category: `"Emerging / Specialized Competency"`
+  - Self-paced duration: `"Approx. 2–3 weeks (self-paced estimate)"`
+  - Prerequisites: `[]`
+  - Core focuses: Core syntax/principles, idiomatic project structures, testing, and ecosystem tools.
+  - Practical milestone: Constructing a standalone proof-of-concept project demonstrating applied competency.
+
+#### Concept F: Recursive Transitive Prerequisite Expansion & Priority Inheritance
+- **The Problem:** An employer may ask for `PostgreSQL` without listing `SQL`, or ask for `React` without listing `JavaScript` and `HTML/CSS`. A naive engine would tell a beginner to start learning PostgreSQL or React directly, which is pedagogically unsound.
+- **The Solution:** Our engine performs **recursive transitive prerequisite expansion**. Starting from missing employer targets, it inspects explicit prerequisites in `SKILL_KNOWLEDGE_BASE`. If the prerequisite is not possessed by the student and not already included, it is injected into the roadmap as a foundational milestone.
+- **Transitive Chaining:** If Skill A requires B, and B requires C, both C and B are discovered and topologically sequenced before A ($C \to B \to A$).
+- **Priority Inheritance:**
+  - Prerequisites of mandatory requirements inherit **High Priority (`High (Mandatory Requirement)`)**.
+  - Prerequisites of preferred opportunities inherit **Medium Priority (`Medium (Growth Opportunity)`)**.
+  - If a prerequisite supports both tiers (e.g. required `PyTorch` and preferred `Pandas` both need `Python`), **mandatory priority wins**.
+
+#### Concept G: Skill-Gap Separation vs. Roadmap Pedagogical Synthesis
+- **Critical Architectural Distinction:**
+  - **Skill-Gap Analyzer (`gap_analyzer.py`):** Strictly audits the candidate's qualifications against the employer's exact posting. If an employer did not ask for SQL, the Skill Gap Report will **never** list SQL as a missing requirement.
+  - **Learning Roadmap Engine (`roadmap.py`):** Synthesizes an actionable pedagogical curriculum. It includes unlisted supporting prerequisites so the student has the foundation needed to achieve competency.
+  - **Transparency:** Injected prerequisites are explicitly flagged with `is_prerequisite=True`, `origin="Injected Prerequisite"`, and a clear explanation: `"Supporting prerequisite for PostgreSQL — not explicitly listed by the employer."`
+
+---
+
+### 3. Files Created & Modified in Milestone 7.1
+
+| File | Purpose | Key Contribution |
+| :--- | :--- | :--- |
+| `app/models/results.py` | Engine Result Dataclasses | Added `RoadmapStep` (with `is_prerequisite`, `prerequisite_for`, `origin`, `rationale`) and `LearningRoadmap` (with `injected_prerequisites_count`). |
+| `app/engine/roadmap.py` | Roadmap Generation Engine | Implemented `SKILL_KNOWLEDGE_BASE` (21 canonical skills), recursive transitive expansion, priority inheritance, DAG topological sorting, cycle detection, duration estimation, and interview readiness. |
+| `app/engine/__init__.py` | Package Interface | Exported `RoadmapStep`, `LearningRoadmap`, `generate_learning_roadmap`, `expand_skill_prerequisites`, `SkillPlanNode`, and knowledge base tools. |
+| `tests/test_roadmap.py` | Unit Testing Suite | 21 automated unit tests covering transitive expansion, priority inheritance, possessed exclusions, multi-level chains, cycle safety, fallback, and zero-hallucination. |
+| `CHANGELOG.md` | Version Tracking | Added release notes for Milestone `[0.7.1]`. |
+| `LEARNING_GUIDE.md` | Viva & Architectural Guide | Added Milestone 7.1 technical theory, algorithm breakdown, transitive expansion, and viva Q&A. |
+| `README.md` | Project Documentation | Updated pipeline architecture, test count (124 tests), and roadmap overview. |
+
+---
+
+### 4. Milestone 7.1 Sample Viva Questions & Model Answers
+
+**Q1: How does your roadmap engine determine the order in which missing skills should be learned?**
+> *Model Answer:* The engine uses a two-tier ordering architecture:
+> 1. **Priority Partitioning:** Missing skills are first partitioned into **Mandatory Requirements** and **Preferred Bonus Skills**. Mandatory requirements are always sequenced first.
+> 2. **Topological Sorting (DAG):** Within each tier, skills are modeled as nodes in a Directed Acyclic Graph where directed edges represent explicit prerequisites from our knowledge base (e.g. Python $\to$ PyTorch, JavaScript $\to$ React). A 3-color Depth-First Search orders prerequisites ahead of dependent skills while guarding against cycles.
+
+**Q2: What happens if a student already knows the prerequisite for a missing skill?**
+> *Model Answer:* The engine implements a **Possessed Prerequisite Guard**. Before scheduling any prerequisite as a step, the engine checks whether that skill is already present in the student's normalized skill profile. If the student already has Python, Python is omitted, and the roadmap directly schedules PyTorch without redundant steps.
+
+**Q3: Why don't you link to specific online courses or certifications in the roadmap?**
+> *Model Answer:* To ensure **platform independence, long-term stability, and zero hallucination**. Commercial links (like Udemy or Coursera URLs) frequently change, become paywalled, or expire. Furthermore, recommending specific paid courses could introduce commercial bias. Instead, our engine provides objective, curriculum-based learning focuses and concrete, hands-on project milestones that students can achieve using any free, open-source, or institutional resource of their choice.
+
+**Q4: Why can a student's learning roadmap contain skills that the employer never asked for?**
+> *Model Answer:* Because our roadmap engine implements **Transitive Prerequisite Expansion**. Job descriptions often mention advanced frameworks (like `PostgreSQL` or `React`) while omitting foundational prerequisites (`SQL` or `JavaScript`). The **Skill-Gap Analyzer** strictly checks employer targets to preserve audit accuracy, but the **Learning Roadmap** is an educational progression plan. If a candidate lacks SQL, telling them to learn advanced PostgreSQL directly is pedagogically flawed. The roadmap injects SQL as a supporting prerequisite, clearly badged with `is_prerequisite=True` and labeled *"Supporting prerequisite for PostgreSQL — not explicitly listed by the employer."*
+
+**Q5: How does priority inheritance work when a prerequisite is shared between required and preferred skills?**
+> *Model Answer:* If a prerequisite is shared between a mandatory skill and a preferred skill (for example, required `PyTorch` and preferred `Pandas` both requiring `Python`), the engine applies **Strongest Priority Wins**. `Python` is elevated to `High (Mandatory Requirement)` and placed in Phase 1 (Critical Foundation) before both `PyTorch` and `Pandas`. Conversely, if a prerequisite only supports a preferred skill (e.g., `JavaScript` supporting preferred `React`), it retains `Medium (Growth Opportunity)` priority.
+
+---
+
+## Milestone 7.2: Recommendation Explanation and Rationale Engine
+
+### 1. Plain English Problem Explanation
+A major issue with many real-world recommendation algorithms is the **"Black Box Problem"**: a system assigns a score (for example, `76.4/100`) but provides no transparent explanation for how or why that number was reached.
+
+When students receive a match score without an explanation:
+1. They don't know whether the score was driven by technical skills, high CGPA, or location proximity.
+2. They cannot determine what they need to improve or why an opportunity was ranked low.
+3. If disqualified, they cannot tell which gatekeeper rule they violated.
+4. If an AI or semantic similarity model was used, they might confuse a vocabulary similarity metric with a guarantee of job placement.
+
+**Milestone 7.2 solves this problem** by providing a deterministic, auditable **Recommendation Explanation and Rationale Engine** (`app/engine/explainer.py`). For every recommendation, the engine explains the exact reasons for the score, identifies the strongest driving factors, highlights omitted competencies with ethical phrasing, isolates gatekeeper disqualifications, and clearly discloses semantic AI behavior.
+
+---
+
+### 2. Core Concepts You Need to Understand
+
+#### Concept A: Multi-Factor Attribution vs. Black-Box Scoring
+- **What is it?** Attribution is the process of breaking down a total composite score into its constituent causal components.
+- In our system, the total score ($0.0$ to $100.0$) is mathematically attributed across 5 explicit dimensions:
+  1. `required_skills`: Mandatory skills specified by the employer.
+  2. `preferred_skills`: Bonus competencies specified by the employer.
+  3. `academic_alignment`: Relevance of major and CGPA margin above cutoff.
+  4. `location_alignment`: Work mode compatibility (remote universality, hybrid, onsite) and location matching.
+  5. `semantic_similarity`: Contextual overlap evaluated by Sentence Transformers (`all-MiniLM-L6-v2`).
+- Each factor explanation reports:
+  - `points_earned` and `max_points`.
+  - `impact_level` (`"High Positive Impact"`, `"Moderate Positive Impact"`, `"Low Positive Impact"`, `"Zero Contribution"`, `"Disqualified"`).
+  - Plain-language human-readable `summary`.
+  - Structured evidence `details`.
+
+#### Concept B: Deterministic Strongest Factor Identification & Impartial Tie-Breaking
+- **The Question:** Which factor contributed the most to this recommendation?
+- **Algorithm (`identify_strongest_factors`):**
+  1. Filter out factors with zero or negative points (`points_earned > 0.0`).
+  2. If no factors earned positive points, return an empty list `[]` (a factor with 0.0 points is never labeled as the strongest).
+  3. Find the maximum points earned across positive factors (`max_points`).
+  4. Every factor whose points equal `max_points` is marked with `is_strongest_factor = True` and added to `strongest_factors`.
+- **Why Tie-Breaking Matters:** If `required_skills` earns $20.0$ pts and `location_alignment` earns $20.0$ pts, a naive system might pick one arbitrarily. Our engine treats all tied top-scorers equally, ensuring deterministic and unbiased auditability.
+
+#### Concept C: Ethical Framing of Missing Competencies
+- In ethical AI, system descriptions must never demean or make unsupported negative claims about candidates.
+- **Bad / Non-Ethical Phrasing:** *"Student lacks capability in PostgreSQL"*, *"Candidate is unqualified in Docker"*.
+- **Ethical, Profile-Grounded Phrasing:** *"Matched 1 of 3 required skills (Python). Omitted from profile: [PostgreSQL, Docker]."*
+- **The Crucial Distinction:** A recommendation engine can only inspect the **declared profile information**. A student might possess Docker skills from personal projects but simply forgot to list Docker on their profile. Framing missing items as **profile omissions** preserves ethical standards and user agency.
+- The engine enforces a global ethical notice on all explanations:
+  > *"Ethical Notice: Recommendations are evaluated strictly on declared profile information. Missing skills reflect profile omissions, not a confirmed lack of personal ability or potential."*
+
+#### Concept D: Hard Gatekeeper Disqualification Isolation
+- When an applicant fails a hard gatekeeper constraint (e.g. CGPA below cutoff, ineligible major, or incompatible graduation year):
+  - The total score is strictly $0.0$.
+  - The opportunity is flagged with `is_eligible = False`.
+  - All recommendation factors are marked with `impact_level = "Disqualified"` and `points_earned = 0.0`.
+  - Gatekeeper rejection reasons are cleanly isolated into `eligibility_summary` (e.g. *"This opportunity was excluded by the Rule-Based Eligibility Gatekeeper: CGPA 2.20 below minimum cutoff 3.00; Major 'Fine Arts' not in eligible majors"*).
+  - High skill matches or semantic vocabulary similarities **never** override eligibility failures.
+
+#### Concept E: Semantic AI Transparency & Non-Probability Disclaimers
+- Semantic similarity is generated using Sentence Transformers (`all-MiniLM-L6-v2`) on CPU.
+- When active, the explanation explicitly discloses:
+  - `raw_similarity`: Exact cosine similarity between profile and internship text (e.g. $0.8240$).
+  - `qualitative_label`: Human-readable alignment tier (e.g. `"Strong Contextual Alignment"`).
+  - `points_earned`: Scaled point contribution (e.g. $20.60 / 25.0$ pts).
+  - `notice`: Explicit disclaimer stating that semantic AI measures vocabulary and contextual overlap, not verified skill competence.
+- Cosine similarity is never presented as a "percentage probability of hiring".
+
+#### Concept F: Dynamic Fallback Rebalancing Explanation
+- If the semantic AI model fails to load, returns a zero vector, or encounters an empty profile:
+  - The system catches the failure gracefully and dynamically falls back to baseline heuristic weights ($45\%$ required, $15\%$ preferred, $20\%$ academic, $20\%$ location).
+  - The explanation system records this event in `fallback_summary` and sets `semantic_similarity.impact_level = "Zero Contribution"`.
+  - The summary explains to the student and viva evaluator:
+    > *"Semantic AI fallback was triggered (Zero embedding vector detected). Scoring weights were automatically rebalanced to baseline heuristic standards (45% required, 15% preferred, 20% academic, 20% location)."*
+
+---
+
+### 3. Files Created & Modified in Milestone 7.2
+
+| File | Purpose | Key Contribution |
+| :--- | :--- | :--- |
+| `app/models/results.py` | Engine Result Dataclasses | Added `FactorExplanation` and `RecommendationExplanation`; extended `RecommendationResult` with `explanation` field and serialization. |
+| `app/engine/explainer.py` | Recommendation Explanation Engine | Implemented deterministic factor attribution, tie-safe strongest factor identification, ethical missing skill framing, gatekeeper isolation, semantic transparency, and headline synthesis. |
+| `app/engine/scorer.py` | Scoring Pipeline Integration | Connected `explain_recommendation` into `score_internship` for both eligible and ineligible pathways. |
+| `app/engine/__init__.py` | Package Exports | Exported `FactorExplanation`, `RecommendationExplanation`, `explain_recommendation`, and attribution tools. |
+| `tests/test_explainer.py` | Automated Unit Testing | 13 automated unit tests verifying strongest factor identification, tied leaders, zero-contribution handling, disqualification isolation, semantic transparency, and ethical framing. |
+| `CHANGELOG.md` | Version Tracking | Added release notes for Milestone `[0.7.2]`. |
+| `LEARNING_GUIDE.md` | Viva & Architectural Guide | Added Milestone 7.2 technical concepts, attribution theory, ethical standards, and viva Q&A. |
+| `README.md` | Project Documentation | Updated architecture overview and test suite verification count (137 tests). |
+
+---
+
+### 4. Milestone 7.2 Sample Viva Questions & Model Answers
+
+**Q1: How does your recommendation engine explain why an internship received its score?**
+> *Model Answer:* The engine implements a dedicated, deterministic Explanation and Rationale Engine (`app/engine/explainer.py`). Instead of relying on a black-box machine learning model or generic text generation, the explainer directly audits the computed `ScoreBreakdown`, `EligibilityResult`, and `SkillGapReport`. It synthesizes a human-readable headline, identifies the primary driving factors by point contribution, explains matched and missing skills with ethical phrasing, details academic and location compatibility, and discloses raw cosine similarity and qualitative labels for semantic AI.
+
+**Q2: How does the system handle ties when determining the strongest factor?**
+> *Model Answer:* In `identify_strongest_factors`, the engine filters for factors that earned strictly positive points (`points_earned > 0.0`), finds the maximum point value among them, and marks **every** factor achieving that maximum value as a strongest factor (`is_strongest_factor = True`). If `required_skills` and `location_alignment` both earned 20.0 points, both are included in `strongest_factors` without arbitrary bias or random selection. If all factors earned 0.0 points, none are marked as strongest.
+
+**Q3: Why do you emphasize "profile omission" rather than "skill deficiency" when explaining missing skills?**
+> *Model Answer:* This reflects a core principle of **Ethical AI**. A digital system can only evaluate declared, self-reported profile data. It cannot observe unlisted competencies or external knowledge. Labeling a missing skill as "student lacks ability" or "unqualified" is an unsupported, pejorative assumption. Describing it as "omitted from profile" accurately reflects the empirical reality—that the competency is absent from the input record—while giving the student actionable feedback to update their profile or engage in targeted self-study.
+
+**Q4: What happens to the explanation when a student is disqualified by the Eligibility Gatekeeper?**
+> *Model Answer:* The system strictly isolates the gatekeeper decision. The total score is clamped to $0.0$, the headline clearly states `"Eligibility Gatekeeper Disqualification"`, and all rejection reasons (e.g. CGPA below cutoff, ineligible major) are explicitly detailed in `eligibility_summary`. To prevent misleading explanations, all recommendation factor impact levels are marked as `"Disqualified"` with 0.0 points earned.
+
+**Q5: How is semantic AI explained, and why is there a non-probability notice?**
+> *Model Answer:* Semantic AI evaluates vocabulary and contextual overlap between student bios/skills and internship descriptions using Sentence Transformers (`all-MiniLM-L6-v2`). The explainer reports the raw cosine similarity (e.g. $0.8240$), the qualitative alignment tier (e.g. `"Strong Contextual Alignment"`), and the earned points. It includes an explicit notice clarifying that semantic similarity measures contextual text alignment, not a verified hiring probability or certified competence. This prevents students and evaluators from misinterpreting NLP embedding proximity as an empirical job guarantee.
+
+---
+
+## Milestone 7.3: API Integration for Explanations and Learning Roadmaps
+
+### 1. Plain English Problem Explanation
+Having powerful algorithms for recommendation scoring, semantic similarity, prerequisite ordering, and multi-factor explanation in separate Python modules is only half the battle. In a production web system, a frontend browser interface (or external client) cannot call Python functions directly. It communicates over HTTP using **REST API endpoints** that return JSON.
+
+If the API is poorly designed:
+1. Endpoints might break when new fields are added (the "breaking change" problem).
+2. Roadmaps might be requested without identifying *both* the student and the internship, producing generic checklists instead of personalized plans.
+3. Bad inputs (e.g., negative IDs or letters instead of numbers) might cause unhandled 500 server crashes and expose sensitive stack traces.
+4. The system might perform redundant database queries or re-load heavy AI models on every request.
+
+**Milestone 7.3 solves this** by integrating the explanation engine and personalized learning roadmaps cleanly into the Flask REST API (`app/routes/api.py`), providing additive response payloads, dedicated roadmap endpoints, and defensive input validation.
+
+---
+
+### 2. Core Concepts You Need to Understand
+
+#### Concept A: Multi-Identifier RESTful Resource Design
+- **The Question:** Why can't a roadmap endpoint simply be `GET /api/roadmaps/<internship_id>`?
+- In our system, a learning roadmap is **personalized**. It depends on:
+  1. The **student's current possessed skills** (e.g. Aarav already has Python; Rohan does not).
+  2. The **internship's specific requirements** (e.g. requires Flask and PostgreSQL).
+- Because a roadmap is the intersection of a specific student and a specific opportunity, the REST URL must identify **both**:
+  - `GET /api/students/<student_id>/roadmap/<internship_id>` (Hierarchical sub-resource)
+  - `GET /api/roadmap?student_id=X&internship_id=Y` (Query parameter alternative)
+- This guarantees that two different students applying for the exact same internship will receive distinct, personalized roadmaps tailored to their individual skill profiles.
+
+#### Concept B: Non-Breaking Additive API Evolution
+- A common software engineering flaw is changing API responses in ways that break existing clients.
+- In `/api/recommend`:
+  - Existing response keys (`student_id`, `internship_id`, `total_score`, `score_breakdown`, `skill_gaps`, `is_demo`) were strictly preserved.
+  - New fields (`explanation` and `roadmap`) were added **additively**.
+  - Any frontend dashboard or mobile client written for Milestone 5 continues to work without modification, while newer components can immediately consume explanations and roadmaps.
+
+#### Concept C: Educational Access for Ineligible Candidates
+- When a student checks `/api/recommend`:
+  - Ineligible listings are placed in `ineligible_listings` with `total_score = 0.0`, explicit gatekeeper rejection reasons, and `roadmap = None` (preventing confusion in the ranking feed).
+- However, when a student directly requests their roadmap via the dedicated endpoint `GET /api/students/<student_id>/roadmap/<internship_id>`:
+  - Even if the student is ineligible for the job (e.g. CGPA 2.9 vs cutoff 3.2), the system returns `200 OK` with `"is_eligible": false`, the gatekeeper reasons, AND the complete pedagogical learning roadmap.
+  - **Why?** Because a learning roadmap is an educational tool. Denying a student a learning plan because their CGPA is currently below cutoff would be pedagogically counterproductive. Students should always be able to discover what competencies they need to learn.
+
+#### Concept D: Defensive Validation & Status Codes
+- Every endpoint defends against invalid inputs:
+  - `400 Bad Request`: If IDs are non-numeric (`abc`), zero (`0`), or negative (`-5`), the API immediately returns a 400 error with an actionable description.
+  - `404 Not Found`: If an ID is a valid integer but does not correspond to an existing row in SQLite, the API returns a 404 error specifying which entity is missing.
+  - `500 Internal Server Error`: Caught defensively with generic, safe messages. Stack traces and internal filesystem paths are never leaked.
+
+#### Concept E: Parameterized SQL Queries
+- All database lookups (`get_student_by_id`, `get_internship_by_id`) use parameterized SQL queries:
+  ```python
+  conn.execute("SELECT ... WHERE id = ?;", (student_id,))
+  ```
+- This completely prevents SQL injection attacks, even if malicious input is passed in URL segments.
+
+---
+
+### 3. Files Created & Modified in Milestone 7.3
+
+| File | Purpose | Key Contribution |
+| :--- | :--- | :--- |
+| `app/models/results.py` | Engine Result Dataclasses | Added `roadmap: Optional['LearningRoadmap'] = None` to `RecommendationResult` and serialized it in `to_dict()`. |
+| `app/engine/scorer.py` | Scoring Pipeline | Integrated `generate_roadmap_for_internship` into `score_internship` for eligible opportunities. |
+| `app/routes/api.py` | REST API Controller | Enhanced `/api/recommend` payload with explanation and roadmap; added dedicated `/api/students/<student_id>/roadmap/<internship_id>` and `/api/roadmap` endpoints with defensive validation. |
+| `tests/test_api.py` | Integration Test Suite | Added 11 new automated API integration tests (30 tests in module, 148 across project) covering explanation delivery, roadmap serialization, injected prerequisites, invalid IDs (400), missing records (404), empty skills, ineligible pairings, and semantic fallback. |
+| `CHANGELOG.md` | Version Tracking | Added release notes for Milestone `[0.7.3]`. |
+| `LEARNING_GUIDE.md` | Viva & Architectural Guide | Added Milestone 7.3 architectural concepts, REST design theory, and viva Q&A. |
+| `README.md` | Project Documentation | Updated REST API specification table, test count (148 tests), and Milestone 7 status. |
+
+---
+
+### 4. Milestone 7.3 Sample Viva Questions & Model Answers
+
+**Q1: Why does your dedicated roadmap endpoint require both student ID and internship ID?**
+> *Model Answer:* Because our learning roadmaps are **personalized, not generic**. The roadmap does not merely list the employer's requirements; it computes the set difference between what the employer wants and what the specific student already possesses. It also checks whether the student already knows any foundational prerequisites. Therefore, an internship ID alone cannot determine a roadmap—the engine requires the student ID to look up possessed skills and build a customized self-study curriculum.
+
+**Q2: What happens if a client passes a non-numeric student ID like `/api/students/abc/roadmap/1`?**
+> *Model Answer:* The endpoint implements defensive type-casting validation. Before executing any database queries, it converts the input string into an integer inside a `try-except` block. If parsing fails, it immediately terminates the request and returns an `HTTP 400 Bad Request` with the JSON message `{"status": "error", "message": "Invalid student ID 'abc'. Student ID must be an integer."}`. This prevents unhandled 500 server crashes and SQL errors.
+
+**Q3: How does your API prevent breaking changes when adding explanations and roadmaps to `/api/recommend`?**
+> *Model Answer:* By adhering to **Additive API Design**. All existing fields returned by earlier milestones—such as `student_id`, `internship_id`, `total_score`, `score_breakdown`, `skill_gaps`, and `is_demo`—remain in their exact same locations with identical types. The new `explanation` and `roadmap` fields were added as new keys in the dictionary. Existing clients continue to parse the payload without error, while updated clients can access the new explanation and roadmap features immediately.
+
+**Q4: Can an ineligible student still get a learning roadmap from the API?**
+> *Model Answer:* Yes, through the dedicated endpoint `GET /api/students/<student_id>/roadmap/<internship_id>`. In the main recommendation feed (`/api/recommend`), ineligible listings have `roadmap: null` to avoid confusing candidates about job eligibility. However, if a student explicitly asks to view the roadmap for that internship, the dedicated endpoint returns `200 OK` with `"is_eligible": false`, lists the explicit eligibility rejection reasons, and provides the complete learning roadmap. This balances administrative transparency with open educational access.
+
+**Q5: How are transitively injected prerequisites serialized in the roadmap API response?**
+> *Model Answer:* Each step in the roadmap's `steps` array is serialized via `RoadmapStep.to_dict()`. When a supporting prerequisite is injected (such as `SQL` for an internship that only listed `PostgreSQL`), the step includes `is_prerequisite: true`, `origin: "Injected Prerequisite"`, and an explicit rationale like `"Supporting prerequisite for PostgreSQL — not explicitly listed by the employer."`. This allows frontend clients to visually distinguish employer-demanded skills from foundational building blocks.
+
+---
+
+## Milestone 7.4: Frontend Integration — Recommendation Explanations and Learning Roadmaps
+
+### 1. Plain English Problem Explanation
+A recommendation and learning system can have perfect mathematics, clean database structures, and sophisticated prerequisite logic, but if the frontend presents this information as an overwhelming wall of text, students will become frustrated and disengaged.
+
+Conversely, if the frontend conceals too much detail, the system reverts to a "black box" where users cannot verify why they received a specific score or which skills they need to learn.
+
+**Milestone 7.4 solves this** through **Progressive Disclosure UI Design**:
+1. At first glance, students see a clean recommendation card with an intuitive match score, high-level headline, demo badge, and top-scoring driver tags.
+2. If interested in the score breakdown, they click a toggle to expand an auditable factor attribution breakdown with progress bars, impact level badges, and semantic similarity disclosures.
+3. If looking for actionable self-study, they expand an embedded vertical learning roadmap with distinct badges for injected prerequisites.
+4. If they want a focused, full-screen study plan, they can open the dedicated roadmap modal dialog for any opportunity (including disqualified listings with educational disclaimers).
+
+---
+
+### 2. Core Concepts You Need to Understand
+
+#### Concept A: Progressive Disclosure in User Experience (UX)
+- **What is it?** Progressive disclosure is a design pattern that sequences information and actions across several screens or expandable sections to reduce cognitive load.
+- In our dashboard:
+  - **Level 1 (Immediate View):** Match score, title, organization, explanation headline, and primary driver pills (`★ Top Drivers`).
+  - **Level 2 (Card Accordion):** Expandable factor attribution breakdown and 4-category skill-gap pills.
+  - **Level 3 (Timeline Accordion):** Expandable step-by-step learning roadmap.
+  - **Level 4 (Modal Dialog):** Deep-dive dedicated roadmap modal dialog showing full curriculum, learning focus bullet points, and concrete project milestones.
+- This ensures the UI remains uncluttered on mobile and desktop while providing deep pedagogical transparency.
+
+#### Concept B: Safe DOM Rendering vs. `innerHTML` XSS Vulnerabilities
+- A critical web security guideline in this project is: **Never insert API-supplied or dynamic text using `innerHTML`**.
+- Using `element.innerHTML = data.someText` creates a vulnerability called **Cross-Site Scripting (XSS)** if input strings contain unescaped HTML tags (such as `<script>` or `<img onerror=...>`).
+- In `app/static/js/dashboard.js`, all dynamic DOM elements are constructed safely using browser APIs:
+  - `document.createElement("div")`
+  - `element.textContent = data.text` (browser automatically encodes special characters)
+  - `element.className = "..."`
+  - `parent.appendChild(element)`
+- This guarantees complete resilience against XSS vulnerabilities.
+
+#### Concept C: Visual Hierarchy & Color Psychology in Decision Support
+- To make factor contributions immediately understandable, the dashboard employs color-coded impact badges:
+  - **`High Positive Impact` (Emerald Green):** Indicates strong competency alignment ($\ge 75\%$ of factor points earned).
+  - **`Moderate Positive Impact` (Sky Blue):** Indicates partial alignment ($\ge 40\%$ of factor points earned).
+  - **`Low Positive Impact` (Slate Gray):** Indicates limited alignment ($< 40\%$).
+  - **`Zero Contribution` (Light Gray):** Indicates no points earned.
+  - **`Disqualified` (Crimson Red):** Indicates eligibility gatekeeper exclusion.
+- Injected prerequisites are styled with a distinct purple badge (`badge-injected: Supporting Prerequisite`) and purple marker (`timeline-step-marker-injected`) so students instantly understand they are foundational building blocks rather than explicit employer requirements.
+
+#### Concept D: Educational Transparency in Ineligible Listings
+- Disqualified opportunities are strictly segregated into the **Disqualified / Ineligible** tab (`#panelIneligible`).
+- They clearly display all gatekeeper rejection reasons (CGPA cutoff, ineligible major, or graduation year mismatch).
+- **The Educational Notice:** A prominent warning clarifies that *"Learning the missing skills does not automatically resolve academic, graduation-year, major, or work-mode restrictions."*
+- However, students can still click `"Inspect Skill Learning Plan (Educational Only)"` to open the roadmap in the modal dialog, empowering them to learn technical skills even if administrative rules currently prevent placement.
+
+#### Concept E: Modal Accessibility (A11y) & Dialog Standards
+- The dedicated roadmap modal dialog follows W3C WAI-ARIA modal guidelines:
+  - Markup attributes: `role="dialog"`, `aria-modal="true"`, `aria-labelledby="modalRoadmapTitle"`.
+  - Accessible dismiss mechanisms:
+    1. Clicking the close button (`×`).
+    2. Clicking outside the dialog on the backdrop.
+    3. Pressing the `Escape` key on the keyboard.
+  - Full mobile responsiveness with flexbox and overflow scrolling.
+
+---
+
+### 3. Files Created & Modified in Milestone 7.4
+
+| File | Purpose | Key Contribution |
+| :--- | :--- | :--- |
+| `app/templates/dashboard.html` | Presentation Template | Added accessible roadmap modal dialog markup (`#roadmapModal`). |
+| `app/static/js/api.js` | API Client | Added `API.getRoadmap(studentId, internshipId)`. |
+| `app/static/css/styles.css` | Design System | Added styles for explanation box, impact badges, roadmap timeline, injected prerequisite badges, milestone cards, and modal dialog. |
+| `app/static/js/dashboard.js` | UI Controller | Implemented safe DOM rendering for explanations, 4-category skill gaps, embedded roadmap timeline, step detail expand/collapse, and dedicated roadmap modal. |
+| `tests/test_views.py` | View Integration Tests | Added unit tests verifying roadmap modal markup rendering and stylesheet classes (total 150 tests passing). |
+| `CHANGELOG.md` | Version Tracking | Added release notes for Milestone `[0.7.4]`. |
+| `LEARNING_GUIDE.md` | Viva & Architectural Guide | Added Milestone 7.4 UX architecture, safe DOM rendering theory, color psychology, and viva Q&A. |
+| `README.md` | Project Documentation | Updated test count (150 tests) and project status checklist. |
+
+---
+
+### 4. Milestone 7.4 Sample Viva Questions & Model Answers
+
+**Q1: How does your frontend prevent Cross-Site Scripting (XSS) when rendering API data?**
+> *Model Answer:* The frontend strictly avoids `innerHTML` concatenation with dynamic data. Every dynamic card, title, summary, and roadmap milestone in `app/static/js/dashboard.js` is rendered using the DOM API: `document.createElement()`, `element.textContent`, and `element.appendChild()`. Setting `textContent` causes the browser to treat all inputs strictly as text rather than executable markup, neutralizing any potential script injection attempts.
+
+**Q2: How does the dashboard prevent cognitive overload when presenting detailed scoring and roadmap data?**
+> *Model Answer:* Through **Progressive Disclosure**. Instead of displaying dozens of lines of scoring equations and roadmap milestones immediately, the dashboard presents a clean summary card with the match score, headline, and top-driver tags. Students can progressively expand the score attribution accordion and the roadmap timeline accordion on demand. Furthermore, deep-dive curriculum details (learning focus topics and practical milestones) are nested inside collapsible step panels, keeping the main feed clean and responsive.
+
+**Q3: How do you visually differentiate employer-demanded skills from transitively injected prerequisites on the frontend?**
+> *Model Answer:* Injected supporting prerequisites are badged with a distinct purple tag (`Supporting Prerequisite`) and purple circular timeline markers (`timeline-step-marker-injected`). Employer-listed requirements, on the other hand, display standard phase and priority badges. Furthermore, each step's rationale explicitly states whether it was *"Directly required by the employer"* or a *"Supporting prerequisite for X — not explicitly listed by the employer"*.
+
+**Q4: What happens if a student views the roadmap for an internship they are disqualified from?**
+> *Model Answer:* The dedicated roadmap modal dialog displays a prominent amber warning callout: *"Educational Learning Plan: The candidate does not currently meet one or more mandatory eligibility requirements for this position. This curriculum is provided for self-study and skill growth only; learning these competencies does not confer eligibility."* The gatekeeper rejection reasons are explicitly listed above the roadmap. This provides complete transparency and ensures students never confuse skill learning with administrative qualification.
+
+**Q5: How does your frontend handle semantic AI similarity and fallback states?**
+> *Model Answer:* When semantic AI is active, the factor attribution row displays the qualitative alignment tier (e.g. `"Strong Contextual Alignment"`), the raw cosine similarity to four decimal places (e.g. `Cosine Sim: 0.8240`), and an explicit disclaimer stating that semantic AI measures vocabulary overlap rather than validated competence. When the semantic model is offline or empty text triggers fallback, a prominent notice tag informs the user: *"Fallback Active: Scored with 4 Baseline Heuristic Weights"*, ensuring total transparency.
+
+---
+
+## UI/UX Redesign: Milestones A, B, and C (Decoupled Architecture & Progressive Disclosure)
+
+### 1. Plain English Problem Explanation
+While Milestone 7.4 successfully visualized recommendation explanations and learning roadmaps on the frontend, presenting all features together on a single dashboard created noticeable cognitive overload. Students were confronted simultaneously with:
+1. A huge static academic profile grid spanning over 350 vertical pixels.
+2. An unfilterable list of all opportunities.
+3. Long inline timeline steps taking up substantial screen space on every recommendation card.
+4. Overwhelming walls of factor formulas and skill-gap pills.
+
+To transform this system into an intuitive, production-grade decision support platform, the user experience was systematically redesigned across three milestones:
+- **Milestone A (Dedicated Internships Catalog):** Extracted general opportunity discovery to `/internships`, allowing students to explore all listings with real-time text searching and work-mode filtering without cluttering the recommendation dashboard.
+- **Milestone B (Dashboard Redesign & Progressive Disclosure):** Replaced the static profile card with a compact context bar, introduced qualitative match tiers (`Strong Match`, `Moderate Match`, `Partial Match`, `Disqualified`), moved deep scoring math into expandable accordions, and replaced long inline timelines with a concise roadmap summary card.
+- **Milestone C (Visual Polish & Accessibility Compliance):** Implemented WAI-ARIA modal dialog focus trapping and restoration, expanded keyboard navigation, exposed accessible drawer states (`aria-expanded`, `aria-controls`), added high-contrast `:focus-visible` focus outlines, and ensured seamless multi-device responsiveness across mobile, tablet, and desktop viewports.
+
+---
+
+### 2. Core Concepts You Need to Understand
+
+#### Concept A: Progressive Disclosure & Miller's Law
+- **What is it?** Cognitive psychologist George Miller proposed that the human working memory can hold approximately $7 \pm 2$ chunks of information at any given time. Presenting 5 scoring factors, 4 skill-gap categories, and multi-step learning roadmaps simultaneously on multiple cards causes decision fatigue.
+- **Progressive Disclosure Pattern:** Surfaces the most critical information first and defers detailed exploration to secondary user interactions:
+  - **Always Visible:** Recommendation score, qualitative match tier, opportunity title/organization, explanation headline, top scoring drivers, and concise roadmap summary.
+  - **Level 1 Disclosure (Expandable Drawers):** Factor attribution breakdown and 4-tier skill-gap lists.
+  - **Level 2 Disclosure (Modal Dialog):** Full step-by-step curriculum with learning focus topics and practical milestones.
+
+#### Concept B: Qualitative Match Tiers
+- Rather than forcing students to interpret raw floating-point numbers in isolation, the UI introduces standardized match tiers:
+  - **`Strong Match` (Score $\ge 75$):** High overall competency and eligibility alignment.
+  - **`Moderate Match` (Score $\ge 50$):** Good baseline with actionable skill growth areas.
+  - **`Partial Match` (Score $> 0$):** Limited alignment; significant preparation required.
+  - **`Disqualified` (Score $= 0$):** Non-negotiable gatekeeper exclusion.
+
+#### Concept C: Separation of Concerns in User Journeys
+- **Recommendation Journey (`/`):** Personal, candidate-centric, evaluation-driven. Focuses on *"How do I match these opportunities, and what should I learn?"*
+- **Catalog Browsing Journey (`/internships`):** Opportunity-centric, market-driven. Focuses on *"What opportunities exist in the market, what do they pay, and what do they require?"*
+- **Candidate Context Deep-Linking:** The catalog allows selecting a student and clicking *"View Recommendations"* to navigate to `/?student_id=X`. This cleanly reuses the existing recommendation pipeline and avoids any duplicate scoring code.
+
+#### Concept D: WAI-ARIA Modal Accessibility & Focus Management
+- When a modal dialog opens, standard accessibility guidelines require rigorous focus management:
+  1. **Focus Shift on Open:** Automatically shifts keyboard focus to the dialog close button (`closeRoadmapModalBtn.focus()`).
+  2. **Focus Trapping:** When the user presses `Tab` or `Shift+Tab`, focus must cycle strictly through focusable elements inside the dialog (close button, step toggle buttons), preventing keyboard focus from escaping into the hidden background page.
+  3. **Escape Key Dismissal:** Pressing `Escape` closes the modal immediately.
+  4. **Focus Restoration:** When the modal closes, focus is programmatically restored to the exact button (`lastActiveTrigger`) that opened it, preserving the user's reading position.
+  5. **ARIA Markup:** The dialog container specifies `role="dialog"`, `aria-modal="true"`, `aria-labelledby="modalRoadmapTitle"`, and `aria-describedby="modalRoadmapSubtitle"`.
+
+#### Concept E: Keyboard Navigation & High-Contrast Focus Visible Rings
+- Native browser focus outlines are often faint and inconsistently rendered.
+- Milestone C introduces a universal `:focus-visible` rule (`outline: 2px solid var(--primary); outline-offset: 2px;`) across all buttons, links, inputs, selects, and textareas.
+- Drawer buttons dynamically manage `aria-expanded="true/false"` and `aria-controls="<drawer-id>"`, informing screen readers whether associated drawers are open or closed.
+- Work-mode filter buttons expose `role="group"` and `aria-pressed="true/false"`.
+
+---
+
+### 3. Files Created & Modified in UI/UX Redesign
+
+| File | Purpose | Key Contribution |
+| :--- | :--- | :--- |
+| `app/routes/views.py` | Web Route Controller | Added `GET /internships` template view route. |
+| `app/templates/base.html` | Layout Shell | Added "Internships" link to navbar with active route highlighting. |
+| `app/templates/internships.html` | Catalog Template | Created dedicated browsable opportunity catalog with search and filter toolbar. |
+| `app/templates/dashboard.html` | Dashboard Template | Replaced 350px static grid with compact `.student-compact-bar` while preserving all student IDs. |
+| `app/static/js/internships.js` | Catalog Controller | Client-side search, work-mode filter pills, specs grid, expandable detail drawers with `aria-expanded` and `aria-controls`, and deep-link to recommendations. |
+| `app/static/js/dashboard.js` | Dashboard Controller | Scannable recommendation cards, qualitative match tiers, progressive disclosure factor and skill drawers, concise roadmap summary card, and WAI-ARIA focus-trapping modal controller. |
+| `app/static/css/styles.css` | Design System | Added catalog toolbar styles, compact profile styles, tier badge classes, accordion drawer styles, high-contrast `:focus-visible` rings, and mobile/tablet responsive media queries. |
+| `tests/test_views.py` | View Integration Tests | Added 8 view integration tests (total 13 tests in module, 156 across project) verifying navbar links, catalog rendering, compact bar markup, and CSS responsive/accessibility classes. |
+| `CHANGELOG.md` | Version Tracking | Added detailed release notes for UI Redesign (Milestones A, B, and C). |
+| `LEARNING_GUIDE.md` | Viva & Architectural Guide | Added UI/UX redesign theory, progressive disclosure principles, WAI-ARIA focus management, and viva Q&A. |
+| `README.md` | Project Documentation | Updated 3-page application overview, REST API table, test count (156 tests), and project status. |
+
+---
+
+### 4. UI/UX Redesign Sample Viva Questions & Model Answers
+
+**Q1: What is Progressive Disclosure and why did you use it in the recommendation dashboard?**
+> *Model Answer:* Progressive disclosure is a human-computer interaction (HCI) design pattern that presents essential summary information up front while deferring secondary and tertiary details until the user explicitly requests them. In our dashboard, displaying 5 multi-factor mathematical breakdowns, 4 categories of skill-gap pills, and multi-step learning timelines simultaneously on every card overwhelmed candidates with visual clutter (violating Miller's Law). By keeping the match score, headline, strongest drivers, and concise roadmap summary visible while tucking detailed factor bars and full skill lists inside accessible accordion drawers, we achieved a clean, scannable layout without losing any analytical transparency.
+
+**Q2: What is focus trapping and why is it mandatory for accessible modal dialogs?**
+> *Model Answer:* Focus trapping ensures that when a modal dialog is open, pressing `Tab` or `Shift+Tab` restricts keyboard navigation strictly to focusable elements inside the modal window. Without a focus trap, a keyboard or screen-reader user would tab right out of the modal into the obscured background page, creating severe confusion and breaking accessibility compliance (WCAG 2.1 Success Criterion 2.1.2: No Keyboard Trap / Modal Focus Management). Additionally, when the modal is closed, the system restores focus back to the triggering element so the user can continue navigating from where they left off.
+
+**Q3: How does the new Internships page avoid duplicating backend recommendation scoring logic?**
+> *Model Answer:* The Internships catalog (`/internships`) is strictly a browsing and discovery tool that retrieves raw opportunity listings from `/api/internships`. When a student is selected in the catalog bar and the user clicks *"View Recommendations"*, the interface does not attempt to calculate scores locally or invoke an ad-hoc scoring script. Instead, it deep-links the user directly to the Discovery Dashboard (`/?student_id=X`), where the existing, battle-tested backend recommendation engine evaluates eligibility, computes transparent multi-factor scores, analyzes skill gaps, and generates learning roadmaps.
+
+**Q4: How do screen readers know whether an accordion drawer is expanded or collapsed?**
+> *Model Answer:* By using the WAI-ARIA state attribute `aria-expanded="true"` or `aria-expanded="false"` directly on the toggle button, along with `aria-controls="<drawer-id>"` referencing the unique ID of the expandable drawer. Whenever a user clicks the toggle button, our JavaScript controller flips the CSS active state and simultaneously updates `btn.setAttribute("aria-expanded", isExpanded ? "true" : "false")`. Screen readers announce this state change immediately to visually impaired users.
+
+**Q5: Why did you introduce Qualitative Match Tiers alongside numerical scores?**
+> *Model Answer:* Numerical scores alone (e.g., 68.5) can feel arbitrary or difficult to evaluate quickly without context. Qualitative Match Tiers (`Strong Match`, `Moderate Match`, `Partial Match`, `Disqualified`) provide an immediate, cognitive heuristic that helps students prioritize opportunities at a glance. Candidates can quickly scan for "Strong Match" opportunities, while still having full access to the exact numerical score, factor attributions, and skill gaps to understand the underlying algorithmic rationale.
+
+
+
+
 
 
 

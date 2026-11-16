@@ -19,6 +19,12 @@ def dashboard():
     return render_template("dashboard.html")
 
 
+@views_bp.route("/internships", methods=["GET"])
+def internships():
+    """Renders the dedicated internship catalog and discovery page."""
+    return render_template("internships.html")
+
+
 @views_bp.route("/profile", methods=["GET"])
 def profile():
     """Renders the student profile editor."""

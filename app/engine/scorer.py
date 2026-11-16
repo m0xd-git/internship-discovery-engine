@@ -3,22 +3,32 @@ Transparent Multi-Criteria Recommendation Scoring Engine
 =============================================================================
 CRITICAL ARCHITECTURAL ROLE:
 Computes transparent, bounded, and deterministic recommendation match scores
-(0.0 to 100.0) for eligible opportunities based on configurable heuristic weights.
+(0.0 to 100.0) for eligible opportunities based on configurable heuristic weights
+and genuine pretrained semantic AI embeddings (all-MiniLM-L6-v2).
 
 NON-NEGOTIABLE CORE INVARIANTS:
 1. Strict Eligibility Gatekeeping: An internship that fails eligibility
-   receives a total_score of EXACTLY 0.0. High skill matches NEVER override
-   failed eligibility.
+   receives a total_score of EXACTLY 0.0. High skill or semantic matches NEVER
+   override failed eligibility. Ineligible listings never trigger semantic encoding.
 2. Complete Mathematical Transparency: Every single point is accounted for
-   in an auditable ScoreBreakdown object.
-3. Non-Probability Notice: Match scores represent algorithmic alignment
-   with listed criteria, NOT hiring probabilities.
-4. No Double-Counting: Academic and logistical factors use distinct evidence.
+   in an auditable ScoreBreakdown object. Total score is normalized to 100.0.
+3. Accurate Terminology: Cosine similarity is never framed as a percentage match
+   or skill possession metric. Raw cosine similarity, points, and qualitative bands
+   are explicitly documented with non-probability notices.
+4. Robust Fallback Rebalancing: If semantic model loading or text encoding fails,
+   the engine falls back cleanly to baseline heuristic weights (45/15/20/20/0)
+   so the total score remains on a complete 100-point scale.
+5. No Double-Counting: Academic and logistical factors use distinct evidence;
+   exact skill matching and skill-gap analysis remain completely separate.
 =============================================================================
 """
 
 from typing import Dict, List, Tuple, Optional, Any
-from app.config import DEFAULT_SCORING_WEIGHTS, validate_weights
+from app.config import (
+    DEFAULT_SCORING_WEIGHTS,
+    SEMANTIC_ACTIVE_SCORING_WEIGHTS,
+    validate_weights,
+)
 from app.models.entities import Student, Internship
 from app.models.results import (
     EligibilityResult,
@@ -28,6 +38,20 @@ from app.models.results import (
 )
 from app.engine.eligibility import check_eligibility, normalize_major
 from app.engine.gap_analyzer import analyze_skill_gaps
+from app.engine.explainer import explain_recommendation
+from app.engine.roadmap import generate_roadmap_for_internship
+from app.engine.semantic import (
+    SemanticEngine,
+    get_semantic_engine,
+    build_student_semantic_text,
+    build_internship_semantic_text,
+    get_semantic_qualitative_label,
+)
+
+SEMANTIC_NOTICE = (
+    "Semantic AI measures contextual and vocabulary alignment between profiles using "
+    "all-MiniLM-L6-v2 embeddings. It does not certify individual skill competence."
+)
 
 
 def calculate_required_skill_score(
@@ -101,8 +125,8 @@ def calculate_academic_alignment_score(
     Avoids double counting: Major measures discipline fit; CGPA margin measures performance.
     """
     max_points = round(weight * 100.0, 2)
-    major_max = round(max_points * 0.60, 2)  # 12.0 pts at weight 0.20
-    cgpa_max = round(max_points * 0.40, 2)   # 8.0 pts at weight 0.20
+    major_max = round(max_points * 0.60, 2)  # 12.0 pts at weight 0.20, 6.0 pts at 0.10
+    cgpa_max = round(max_points * 0.40, 2)   # 8.0 pts at weight 0.20, 4.0 pts at 0.10
 
     # 1. Major Relevance Evaluation
     norm_student_major = normalize_major(student.major) if student.major else ""
@@ -132,8 +156,6 @@ def calculate_academic_alignment_score(
         cgpa_points = 0.0
         cgpa_detail = "Student CGPA is missing or invalid (0 pts)."
     else:
-        # Student meets baseline cutoff (verified by eligibility).
-        # We award 50% baseline for meeting cutoff + up to 50% for margin exceeding cutoff.
         base_cgpa_pts = cgpa_max * 0.50
         margin_cgpa_pts = cgpa_max * 0.50
 
@@ -172,8 +194,8 @@ def calculate_location_alignment_score(
     geographic location measures physical city location.
     """
     max_points = round(weight * 100.0, 2)
-    mode_max = round(max_points * 0.50, 2)  # 10.0 pts at weight 0.20
-    geo_max = round(max_points * 0.50, 2)   # 10.0 pts at weight 0.20
+    mode_max = round(max_points * 0.50, 2)  # 10.0 pts at weight 0.20, 5.0 pts at 0.10
+    geo_max = round(max_points * 0.50, 2)   # 10.0 pts at weight 0.20, 5.0 pts at 0.10
 
     # 1. Work Mode Alignment
     student_mode = student.preferred_work_mode.strip().capitalize() if student.preferred_work_mode else ""
@@ -189,7 +211,6 @@ def calculate_location_alignment_score(
         mode_points = mode_max
         mode_detail = f"Exact work mode match: both are '{internship_mode}' ({mode_max:.1f} pts)."
     elif student_mode == "Any":
-        # Candidate is flexible for all modes
         mode_points = round(mode_max * 0.80, 2)
         mode_detail = f"Flexible work mode: student accepts any arrangement ({mode_points:.1f} pts)."
     else:
@@ -204,7 +225,6 @@ def calculate_location_alignment_score(
     job_loc = internship.location.strip().lower() if internship.location else ""
 
     if internship_mode == "Remote":
-        # Universal geographic accessibility for remote opportunities
         geo_points = geo_max
         geo_detail = f"Remote opportunity: universally accessible from any location ({geo_max:.1f} pts)."
     elif not student_loc:
@@ -217,7 +237,6 @@ def calculate_location_alignment_score(
         geo_points = geo_max
         geo_detail = f"Exact geographic match with '{internship.location}' ({geo_max:.1f} pts)."
     else:
-        # Partial relocation distance penalty
         geo_points = round(geo_max * 0.20, 2)
         geo_detail = f"Different location: student in '{student.preferred_location}', role in '{internship.location}' ({geo_points:.1f} pts)."
 
@@ -226,19 +245,145 @@ def calculate_location_alignment_score(
     return total_pts, max_points, details
 
 
+def calculate_semantic_similarity_score(
+    student: Student,
+    internship: Internship,
+    weight: float,
+    semantic_engine: Optional[SemanticEngine] = None,
+) -> Tuple[float, float, Dict[str, Any], bool, Optional[str]]:
+    """
+    Computes semantic AI alignment score using genuine pretrained sentence-transformers embeddings.
+
+    Guarantees:
+    - Never frames cosine similarity as a 'skill-match percentage'.
+    - Exposes raw cosine similarity, earned points, and qualitative alignment label.
+    - If profile text is empty or model encoding fails, returns is_success=False
+      with an explicit reason to trigger safe fallback rebalancing.
+    - Zero vectors or unverified values never award unearned points.
+
+    Returns:
+        Tuple:
+            - points (float): Earned semantic contribution points.
+            - max_points (float): Maximum possible semantic points.
+            - breakdown_data (dict): Auditable metadata dictionary.
+            - is_success (bool): Whether encoding and calculation succeeded.
+            - fallback_reason (Optional[str]): Explicit reason if fallback required.
+    """
+    max_points = round(weight * 100.0, 2)
+    if weight <= 0.0:
+        breakdown_data = {
+            "points": 0.0,
+            "max_points": 0.0,
+            "weight": 0.0,
+            "raw_similarity": 0.0,
+            "qualitative_label": "Not evaluated",
+            "details": "Semantic scoring disabled (weight is 0.0).",
+            "fallback_applied": False,
+            "fallback_reason": None,
+            "notice": SEMANTIC_NOTICE,
+        }
+        return 0.0, 0.0, breakdown_data, True, None
+
+    # 1. Deterministic Text Construction (Adjustment 1)
+    s_text = build_student_semantic_text(student)
+    j_text = build_internship_semantic_text(internship)
+
+    if not s_text or not j_text:
+        reason = (
+            "Student profile has no skills or bio text for semantic encoding."
+            if not s_text
+            else "Internship listing has no skills or description for semantic encoding."
+        )
+        breakdown_data = {
+            "points": 0.0,
+            "max_points": max_points,
+            "weight": weight,
+            "raw_similarity": 0.0,
+            "qualitative_label": "Minimal contextual alignment",
+            "details": f"Semantic encoding bypassed: {reason}",
+            "fallback_applied": True,
+            "fallback_reason": reason,
+            "notice": SEMANTIC_NOTICE,
+        }
+        return 0.0, max_points, breakdown_data, False, reason
+
+    # 2. Embedding Generation and Validation (Adjustment 3)
+    engine = semantic_engine or get_semantic_engine()
+    vec_s = engine.encode_valid_text(s_text)
+    vec_j = engine.encode_valid_text(j_text)
+
+    if vec_s is None or vec_j is None:
+        reason = "Semantic model unavailable or produced an invalid embedding vector."
+        breakdown_data = {
+            "points": 0.0,
+            "max_points": max_points,
+            "weight": weight,
+            "raw_similarity": 0.0,
+            "qualitative_label": "Minimal contextual alignment",
+            "details": f"Semantic encoding failed: {reason}",
+            "fallback_applied": True,
+            "fallback_reason": reason,
+            "notice": SEMANTIC_NOTICE,
+        }
+        return 0.0, max_points, breakdown_data, False, reason
+
+    # 3. Cosine Similarity and Attribution (Adjustment 2)
+    raw_sim = float(engine.compute_cosine_similarity(vec_s, vec_j))
+    raw_sim = round(raw_sim, 4)
+
+    # Cosine similarity can range from -1.0 to 1.0; negative similarity clamped to 0.0 for scoring
+    norm_sim = max(0.0, min(1.0, raw_sim))
+    points = round(norm_sim * max_points, 2)
+    qualitative_label = get_semantic_qualitative_label(raw_sim)
+
+    details = (
+        f"Contextual similarity: {raw_sim:.4f} ({qualitative_label}). "
+        f"Awarded {points:.2f} of {max_points:.2f} semantic points."
+    )
+
+    breakdown_data = {
+        "points": points,
+        "max_points": max_points,
+        "weight": weight,
+        "raw_similarity": raw_sim,
+        "qualitative_label": qualitative_label,
+        "details": details,
+        "fallback_applied": False,
+        "fallback_reason": None,
+        "notice": SEMANTIC_NOTICE,
+    }
+    return points, max_points, breakdown_data, True, None
+
+
 def score_internship(
     student: Student,
     internship: Internship,
     weights: Optional[Dict[str, float]] = None,
+    use_semantic: bool = False,
+    semantic_engine: Optional[SemanticEngine] = None,
 ) -> RecommendationResult:
     """
     Evaluates eligibility, analyzes skill gaps, and computes a transparent recommendation score.
 
     HARD GATE GUARANTEE:
-    If `check_eligibility()` fails, total_score is strictly 0.0, and the breakdown
-    documents the explicit rejection reasons.
+    If `check_eligibility()` fails, total_score is strictly 0.0, the breakdown
+    documents explicit rejection reasons, and semantic encoding is NEVER invoked.
+
+    FALLBACK REBALANCING GUARANTEE:
+    If semantic scoring is active but fails due to missing text or model errors,
+    the engine falls back to baseline weights (45% required, 15% preferred, 20% academic,
+    20% location, 0% semantic), ensuring total score remains normalized to 100.0.
     """
-    active_weights = dict(weights or DEFAULT_SCORING_WEIGHTS)
+    if weights is not None:
+        active_weights = dict(weights)
+        evaluate_semantic = active_weights.get("semantic_similarity", 0.0) > 0.0
+    else:
+        if use_semantic:
+            active_weights = dict(SEMANTIC_ACTIVE_SCORING_WEIGHTS)
+            evaluate_semantic = True
+        else:
+            active_weights = dict(DEFAULT_SCORING_WEIGHTS)
+            evaluate_semantic = False
 
     # 1. Validate weights configuration
     if any(w < 0.0 for w in active_weights.values()):
@@ -247,7 +392,7 @@ def score_internship(
         total_w = sum(active_weights.values())
         raise ValueError(f"Scoring weights must sum to 1.0 (currently sums to {total_w:.4f}).")
 
-    # 2. Hard Gate: Rule-Based Eligibility Check
+    # 2. Hard Gate: Rule-Based Eligibility Check (Runs BEFORE any semantic encoding)
     eligibility = check_eligibility(student, internship)
 
     # 3. Exact Skill-Gap Analysis
@@ -263,7 +408,7 @@ def score_internship(
     w_loc = active_weights.get("location_alignment", 0.20)
     w_sem = active_weights.get("semantic_similarity", 0.00)
 
-    # If ineligible: total score is strictly 0.0
+    # Strict Gatekeeping: If ineligible, total score is strictly 0.0; NO semantic encoding performed
     if not eligibility.is_eligible:
         disqualify_msg = f"Disqualified by Eligibility Gatekeeper: {'; '.join(eligibility.rejection_reasons)}"
         breakdown = ScoreBreakdown(
@@ -271,9 +416,19 @@ def score_internship(
             preferred_skills={"points": 0.0, "max_points": round(w_pref * 100, 2), "weight": w_pref, "details": disqualify_msg},
             academic_alignment={"points": 0.0, "max_points": round(w_acad * 100, 2), "weight": w_acad, "details": disqualify_msg},
             location_alignment={"points": 0.0, "max_points": round(w_loc * 100, 2), "weight": w_loc, "details": disqualify_msg},
-            semantic_similarity={"points": 0.0, "max_points": round(w_sem * 100, 2), "weight": w_sem, "details": "Deferred to Milestone 6."},
+            semantic_similarity={
+                "points": 0.0,
+                "max_points": round(w_sem * 100, 2),
+                "weight": w_sem,
+                "raw_similarity": 0.0,
+                "qualitative_label": "Disqualified",
+                "details": disqualify_msg,
+                "fallback_applied": False,
+                "fallback_reason": None,
+                "notice": SEMANTIC_NOTICE,
+            },
         )
-        return RecommendationResult(
+        rec = RecommendationResult(
             student_id=student.id or 0,
             internship_id=internship.id or 0,
             internship_title=internship.title,
@@ -284,13 +439,69 @@ def score_internship(
             skill_gaps=skill_gaps,
             is_demo=internship.is_demo,
         )
+        rec.explanation = explain_recommendation(rec, student, internship)
+        rec.roadmap = None
+        return rec
 
     # 4. Compute transparent component scores for eligible candidates
-    req_pts, req_max, req_desc = calculate_required_skill_score(skill_gaps, w_req)
-    pref_pts, pref_max, pref_desc = calculate_preferred_skill_score(skill_gaps, w_pref)
-    acad_pts, acad_max, acad_desc = calculate_academic_alignment_score(student, internship, w_acad)
-    loc_pts, loc_max, loc_desc = calculate_location_alignment_score(student, internship, w_loc)
-    sem_pts, sem_max, sem_desc = 0.0, round(w_sem * 100, 2), "Deferred to Milestone 6."
+    if evaluate_semantic and w_sem > 0.0:
+        sem_pts, sem_max, sem_data, is_success, fallback_reason = calculate_semantic_similarity_score(
+            student=student,
+            internship=internship,
+            weight=w_sem,
+            semantic_engine=semantic_engine,
+        )
+
+        if not is_success:
+            # Fallback Rebalancing (Adjustment 3): Rebalance to DEFAULT_SCORING_WEIGHTS (45/15/20/20/0)
+            fb_weights = dict(DEFAULT_SCORING_WEIGHTS)
+            w_req = fb_weights["required_skills"]
+            w_pref = fb_weights["preferred_skills"]
+            w_acad = fb_weights["academic_alignment"]
+            w_loc = fb_weights["location_alignment"]
+            w_sem = 0.0
+
+            req_pts, req_max, req_desc = calculate_required_skill_score(skill_gaps, w_req)
+            pref_pts, pref_max, pref_desc = calculate_preferred_skill_score(skill_gaps, w_pref)
+            acad_pts, acad_max, acad_desc = calculate_academic_alignment_score(student, internship, w_acad)
+            loc_pts, loc_max, loc_desc = calculate_location_alignment_score(student, internship, w_loc)
+
+            sem_pts = 0.0
+            sem_max = 0.0
+            sem_data["points"] = 0.0
+            sem_data["max_points"] = 0.0
+            sem_data["weight"] = 0.0
+            sem_data["fallback_applied"] = True
+            sem_data["fallback_reason"] = fallback_reason
+            sem_data["details"] = (
+                f"Fallback applied ({fallback_reason}). "
+                f"Scored using baseline heuristic weights (45% required, 15% preferred, 20% academic, 20% location)."
+            )
+        else:
+            # Semantic encoding succeeded with active weights
+            req_pts, req_max, req_desc = calculate_required_skill_score(skill_gaps, w_req)
+            pref_pts, pref_max, pref_desc = calculate_preferred_skill_score(skill_gaps, w_pref)
+            acad_pts, acad_max, acad_desc = calculate_academic_alignment_score(student, internship, w_acad)
+            loc_pts, loc_max, loc_desc = calculate_location_alignment_score(student, internship, w_loc)
+    else:
+        # Baseline heuristic mode (semantic disabled or weight 0.0)
+        req_pts, req_max, req_desc = calculate_required_skill_score(skill_gaps, w_req)
+        pref_pts, pref_max, pref_desc = calculate_preferred_skill_score(skill_gaps, w_pref)
+        acad_pts, acad_max, acad_desc = calculate_academic_alignment_score(student, internship, w_acad)
+        loc_pts, loc_max, loc_desc = calculate_location_alignment_score(student, internship, w_loc)
+        sem_pts = 0.0
+        sem_max = round(w_sem * 100, 2)
+        sem_data = {
+            "points": 0.0,
+            "max_points": sem_max,
+            "weight": w_sem,
+            "raw_similarity": 0.0,
+            "qualitative_label": "Not evaluated",
+            "details": "Semantic scoring not enabled for this run.",
+            "fallback_applied": False,
+            "fallback_reason": None,
+            "notice": SEMANTIC_NOTICE,
+        }
 
     total_score = round(min(100.0, max(0.0, req_pts + pref_pts + acad_pts + loc_pts + sem_pts)), 2)
 
@@ -299,10 +510,10 @@ def score_internship(
         preferred_skills={"points": pref_pts, "max_points": pref_max, "weight": w_pref, "details": pref_desc},
         academic_alignment={"points": acad_pts, "max_points": acad_max, "weight": w_acad, "details": acad_desc},
         location_alignment={"points": loc_pts, "max_points": loc_max, "weight": w_loc, "details": loc_desc},
-        semantic_similarity={"points": sem_pts, "max_points": sem_max, "weight": w_sem, "details": sem_desc},
+        semantic_similarity=sem_data,
     )
 
-    return RecommendationResult(
+    rec = RecommendationResult(
         student_id=student.id or 0,
         internship_id=internship.id or 0,
         internship_title=internship.title,
@@ -313,27 +524,44 @@ def score_internship(
         skill_gaps=skill_gaps,
         is_demo=internship.is_demo,
     )
+    rec.explanation = explain_recommendation(rec, student, internship)
+    rec.roadmap = generate_roadmap_for_internship(student, internship)
+    return rec
 
 
 def generate_recommendations(
     student: Student,
     internships: List[Internship],
     weights: Optional[Dict[str, float]] = None,
+    use_semantic: bool = True,
+    semantic_engine: Optional[SemanticEngine] = None,
 ) -> Tuple[List[RecommendationResult], List[RecommendationResult]]:
     """
     Ranks eligible internships by recommendation score while strictly segregating
     disqualified opportunities into a separate collection.
+
+    Defaults to `use_semantic=True` using the pretrained semantic model.
 
     Returns:
         Tuple:
             - eligible_recommendations: Ranked in descending order of match score.
             - ineligible_listings: Unranked opportunities with explicit exclusion reasons.
     """
+    engine = semantic_engine
+    if use_semantic and engine is None and (weights is None or weights.get("semantic_similarity", 0.0) > 0.0):
+        engine = get_semantic_engine()
+
     eligible_list: List[RecommendationResult] = []
     ineligible_list: List[RecommendationResult] = []
 
     for item in internships:
-        rec = score_internship(student, item, weights)
+        rec = score_internship(
+            student=student,
+            internship=item,
+            weights=weights,
+            use_semantic=use_semantic,
+            semantic_engine=engine,
+        )
         if rec.eligibility.is_eligible:
             eligible_list.append(rec)
         else:

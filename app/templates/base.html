@@ -27,6 +27,7 @@
             </a>
             <ul class="nav-links">
                 <li><a href="{{ url_for('views.dashboard') }}" class="nav-item {% if request.path == '/' %}active{% endif %}">Discovery Dashboard</a></li>
+                <li><a href="{{ url_for('views.internships') }}" class="nav-item {% if request.path == '/internships' %}active{% endif %}">Internships</a></li>
                 <li><a href="{{ url_for('views.profile') }}" class="nav-item {% if request.path == '/profile' %}active{% endif %}">Student Profile</a></li>
             </ul>
         </div>

@@ -453,6 +453,34 @@ class TestAPIEndpoints(unittest.TestCase):
         response = self.client.post("/api/recommend", data="not json", content_type="text/plain")
         self.assertEqual(response.status_code, 400)
 
+    def test_recommend_endpoint_includes_semantic_breakdown(self):
+        """POST /api/recommend must return transparent semantic AI breakdown attributes."""
+        response = self.client.post("/api/recommend", json={"student_id": 1})
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+
+        eligible = data["eligible_recommendations"]
+        self.assertGreater(len(eligible), 0)
+
+        # Inspect the top recommendation's score breakdown
+        top_rec = eligible[0]
+        bd = top_rec["score_breakdown"]
+        self.assertIn("semantic_similarity", bd)
+
+        sem = bd["semantic_similarity"]
+        self.assertIn("points", sem)
+        self.assertIn("max_points", sem)
+        self.assertIn("weight", sem)
+        self.assertIn("raw_similarity", sem)
+        self.assertIn("qualitative_label", sem)
+        self.assertIn("notice", sem)
+        self.assertIn("fallback_applied", sem)
+
+        self.assertIsInstance(sem["points"], (int, float))
+        self.assertIsInstance(sem["raw_similarity"], (int, float))
+        self.assertIsInstance(sem["fallback_applied"], bool)
+        self.assertIn("all-MiniLM-L6-v2", sem["notice"])
+
     # -------------------------------------------------------------------------
     # 4. Health Check Endpoint
     # -------------------------------------------------------------------------
@@ -462,6 +490,262 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
         self.assertEqual(data["status"], "healthy")
+
+    # -------------------------------------------------------------------------
+    # 5. Milestone 7.3: Explanations & Roadmaps API Integration Tests
+    # -------------------------------------------------------------------------
+    def test_recommend_endpoint_includes_explanation(self):
+        """POST /api/recommend must include comprehensive RecommendationExplanation in response."""
+        response = self.client.post("/api/recommend", json={"student_id": 1})
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+
+        eligible = data["eligible_recommendations"]
+        self.assertGreater(len(eligible), 0)
+
+        for rec in eligible:
+            self.assertIn("explanation", rec)
+            exp = rec["explanation"]
+            self.assertIsNotNone(exp)
+            self.assertIn("headline", exp)
+            self.assertIn("factors", exp)
+            self.assertIn("strongest_factors", exp)
+            self.assertIn("ethical_notice", exp)
+            self.assertIn("Ethical Notice", exp["ethical_notice"])
+
+            # Verify all 5 scoring dimensions are explained
+            factors = exp["factors"]
+            for factor_key in ("required_skills", "preferred_skills", "academic_alignment", "location_alignment", "semantic_similarity"):
+                self.assertIn(factor_key, factors)
+                f = factors[factor_key]
+                self.assertIn("points_earned", f)
+                self.assertIn("max_points", f)
+                self.assertIn("impact_level", f)
+                self.assertIn("summary", f)
+
+    def test_recommend_endpoint_retains_all_existing_fields(self):
+        """POST /api/recommend must preserve all legacy response fields to ensure no client breakage."""
+        response = self.client.post("/api/recommend", json={"student_id": 1})
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+
+        self.assertIn("status", data)
+        self.assertIn("student_id", data)
+        self.assertIn("student_name", data)
+        self.assertIn("total_evaluated", data)
+        self.assertIn("eligible_count", data)
+        self.assertIn("ineligible_count", data)
+        self.assertIn("eligible_recommendations", data)
+        self.assertIn("ineligible_listings", data)
+
+        top = data["eligible_recommendations"][0]
+        expected_fields = [
+            "student_id", "internship_id", "internship_title", "organization",
+            "eligibility", "total_score", "score_breakdown", "skill_gaps", "is_demo"
+        ]
+        for field in expected_fields:
+            self.assertIn(field, top, f"Legacy field '{field}' was missing from recommendation item.")
+
+    def test_recommend_endpoint_returns_roadmap_for_eligible(self):
+        """POST /api/recommend must include LearningRoadmap for eligible and None for ineligible."""
+        response = self.client.post("/api/recommend", json={"student_id": 1})
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+
+        # Eligible recommendations must carry a populated roadmap
+        for rec in data["eligible_recommendations"]:
+            self.assertIn("roadmap", rec)
+            rm = rec["roadmap"]
+            self.assertIsNotNone(rm)
+            self.assertIn("total_steps", rm)
+            self.assertIn("mandatory_steps_count", rm)
+            self.assertIn("preferred_steps_count", rm)
+            self.assertIn("injected_prerequisites_count", rm)
+            self.assertIn("estimated_total_duration", rm)
+            self.assertIn("steps", rm)
+            self.assertIn("ethical_notice", rm)
+            self.assertIsInstance(rm["steps"], list)
+            self.assertGreater(len(rm["steps"]), 0)
+
+            # Check step structure
+            step = rm["steps"][0]
+            self.assertIn("step_number", step)
+            self.assertIn("skill_name", step)
+            self.assertIn("priority", step)
+            self.assertIn("phase", step)
+            self.assertIn("estimated_duration", step)
+            self.assertIn("learning_focus", step)
+            self.assertIn("practical_milestone", step)
+            self.assertIn("origin", step)
+            self.assertIn("rationale", step)
+
+        # Ineligible listings must have roadmap == None
+        for inel in data["ineligible_listings"]:
+            self.assertIn("roadmap", inel)
+            self.assertIsNone(inel["roadmap"])
+
+    def test_dedicated_roadmap_endpoint_success(self):
+        """GET /api/students/<id>/roadmap/<id> must return personalized roadmap for student and internship."""
+        # Student 1 (Aarav Sharma), Internship 1 (Nexlify Backend)
+        response = self.client.get("/api/students/1/roadmap/1")
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+
+        self.assertEqual(data["status"], "success")
+        self.assertEqual(data["student_id"], 1)
+        self.assertEqual(data["internship_id"], 1)
+        self.assertIn("student_name", data)
+        self.assertIn("internship_title", data)
+        self.assertIn("organization", data)
+        self.assertIn("is_eligible", data)
+        self.assertIn("eligibility", data)
+        self.assertIn("roadmap", data)
+
+        rm = data["roadmap"]
+        self.assertGreater(rm["total_steps"], 0)
+        self.assertIn("steps", rm)
+        self.assertIn("ethical_notice", rm)
+
+        # Test plural route alias
+        res_plural = self.client.get("/api/students/1/roadmaps/1")
+        self.assertEqual(res_plural.status_code, 200)
+        self.assertEqual(res_plural.get_json()["internship_id"], 1)
+
+        # Test query parameter route
+        res_query = self.client.get("/api/roadmap?student_id=1&internship_id=1")
+        self.assertEqual(res_query.status_code, 200)
+        self.assertEqual(res_query.get_json()["student_id"], 1)
+
+    def test_dedicated_roadmap_injected_prerequisites_serialization(self):
+        """Dedicated roadmap endpoint must serialize injected supporting prerequisites with origins and rationales."""
+        import sqlite3
+        conn = sqlite3.connect(self.test_db_path)
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO students (name, email, major, cgpa, graduation_year, preferred_work_mode, preferred_location)
+            VALUES ('Novice Student', 'novice@example.edu', 'Computer Science', 3.7, 2026, 'Remote', 'Bengaluru, India');
+        """)
+        novice_id = cur.lastrowid
+
+        cur.execute("""
+            INSERT INTO internships (title, organization, location, work_mode, min_cgpa, eligible_majors_json, min_grad_year, max_grad_year, description, is_demo)
+            VALUES ('Postgres Intern', 'DB Systems', 'Bengaluru', 'Remote', 3.0, '["Computer Science"]', 2025, 2027, 'PostgreSQL backend role', 1);
+        """)
+        pg_internship_id = cur.lastrowid
+
+        cur.execute("SELECT id FROM skills WHERE name = 'PostgreSQL';")
+        pg_skill_id = cur.fetchone()[0]
+        cur.execute("INSERT INTO internship_skills (internship_id, skill_id, is_mandatory) VALUES (?, ?, 1);", (pg_internship_id, pg_skill_id))
+        conn.commit()
+        conn.close()
+
+        response = self.client.get(f"/api/students/{novice_id}/roadmap/{pg_internship_id}")
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+
+        rm = data["roadmap"]
+        self.assertGreaterEqual(rm["injected_prerequisites_count"], 1)
+
+        sql_steps = [s for s in rm["steps"] if s["skill_name"] == "SQL"]
+        self.assertEqual(len(sql_steps), 1)
+        sql_step = sql_steps[0]
+        self.assertTrue(sql_step["is_prerequisite"])
+        self.assertEqual(sql_step["origin"], "Injected Prerequisite")
+        self.assertIn("PostgreSQL", sql_step["rationale"])
+        self.assertEqual(sql_step["priority"], "High (Mandatory Requirement)")
+
+        pg_step = next(s for s in rm["steps"] if s["skill_name"] == "PostgreSQL")
+        self.assertLess(sql_step["step_number"], pg_step["step_number"])
+
+    def test_dedicated_roadmap_invalid_student_id_returns_400(self):
+        """GET /api/students/<invalid_id>/roadmap/<id> must return 400 Bad Request."""
+        res_text = self.client.get("/api/students/not_a_number/roadmap/1")
+        self.assertEqual(res_text.status_code, 400)
+        self.assertIn("must be an integer", res_text.get_json()["message"])
+
+        res_neg = self.client.get("/api/students/-5/roadmap/1")
+        self.assertEqual(res_neg.status_code, 400)
+        self.assertIn("positive integer", res_neg.get_json()["message"])
+
+    def test_dedicated_roadmap_invalid_internship_id_returns_400(self):
+        """GET /api/students/<id>/roadmap/<invalid_id> must return 400 Bad Request."""
+        res_text = self.client.get("/api/students/1/roadmap/invalid_id")
+        self.assertEqual(res_text.status_code, 400)
+        self.assertIn("must be an integer", res_text.get_json()["message"])
+
+        res_zero = self.client.get("/api/students/1/roadmap/0")
+        self.assertEqual(res_zero.status_code, 400)
+        self.assertIn("positive integer", res_zero.get_json()["message"])
+
+    def test_dedicated_roadmap_missing_student_or_internship_returns_404(self):
+        """Nonexistent student or internship ID must return 404 with descriptive message."""
+        res_stu = self.client.get("/api/students/9999/roadmap/1")
+        self.assertEqual(res_stu.status_code, 404)
+        self.assertIn("9999", res_stu.get_json()["message"])
+
+        res_intern = self.client.get("/api/students/1/roadmap/9999")
+        self.assertEqual(res_intern.status_code, 404)
+        self.assertIn("9999", res_intern.get_json()["message"])
+
+    def test_dedicated_roadmap_empty_skills_student(self):
+        """Student with zero recorded skills must generate a valid foundational roadmap without crashing."""
+        import sqlite3
+        conn = sqlite3.connect(self.test_db_path)
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO students (name, email, major, cgpa, graduation_year, preferred_work_mode, preferred_location)
+            VALUES ('Zero Skills Student', 'zeroskills@example.edu', 'Computer Science', 3.5, 2026, 'Remote', 'Any');
+        """)
+        zero_student_id = cur.lastrowid
+        conn.commit()
+        conn.close()
+
+        response = self.client.get(f"/api/students/{zero_student_id}/roadmap/1")
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(data["status"], "success")
+        self.assertGreater(data["roadmap"]["total_steps"], 0)
+
+    def test_dedicated_roadmap_ineligible_internship_handling(self):
+        """Dedicated endpoint for an ineligible student-internship pair returns 200 with is_eligible=False and roadmap."""
+        # Student 3 (Mechanical Engineering, CGPA 2.9) is ineligible for Internship 3 (ML Research: min CGPA 3.5, CS/AI major)
+        response = self.client.get("/api/students/3/roadmap/3")
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+
+        self.assertEqual(data["status"], "success")
+        self.assertFalse(data["is_eligible"])
+        self.assertIn("eligibility", data)
+        self.assertFalse(data["eligibility"]["is_eligible"])
+        self.assertGreater(len(data["eligibility"]["rejection_reasons"]), 0)
+
+        # Learning roadmap is still successfully generated so student can study missing competencies
+        self.assertIn("roadmap", data)
+        self.assertGreater(data["roadmap"]["total_steps"], 0)
+
+    def test_recommend_semantic_fallback_handling(self):
+        """POST /api/recommend with profile that triggers fallback must populate fallback_summary."""
+        minimal_payload = {
+            "name": "Minimal Student",
+            "major": "Computer Science",
+            "cgpa": 3.7,
+            "graduation_year": 2026,
+            "preferred_work_mode": "Remote",
+            "preferred_location": "Bengaluru",
+            "bio_summary": "",
+            "skills": [],
+        }
+        response = self.client.post("/api/recommend", json=minimal_payload)
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+
+        self.assertGreater(len(data["eligible_recommendations"]), 0)
+        top = data["eligible_recommendations"][0]
+        exp = top["explanation"]
+        self.assertIsNotNone(exp)
+        self.assertIsNotNone(exp["fallback_summary"])
+        self.assertIn("fallback", exp["fallback_summary"].lower())
+        self.assertIn("baseline heuristic", exp["fallback_summary"])
 
 
 if __name__ == "__main__":

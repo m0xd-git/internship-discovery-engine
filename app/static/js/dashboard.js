@@ -1,7 +1,7 @@
 /**
  * Dashboard Controller
  * Manages student selection, recommendation requests, score visualization,
- * and safe DOM rendering for eligible vs ineligible listings.
+ * factor attribution explanations, learning roadmaps, and dedicated modal access.
  */
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -24,6 +24,13 @@ document.addEventListener("DOMContentLoaded", () => {
     const tabIneligible = document.getElementById("tabIneligible");
     const panelEligible = document.getElementById("panelEligible");
     const panelIneligible = document.getElementById("panelIneligible");
+
+    // Modal DOM Elements
+    const roadmapModal = document.getElementById("roadmapModal");
+    const closeRoadmapModalBtn = document.getElementById("closeRoadmapModalBtn");
+    const modalRoadmapTitle = document.getElementById("modalRoadmapTitle");
+    const modalRoadmapSubtitle = document.getElementById("modalRoadmapSubtitle");
+    const modalRoadmapBody = document.getElementById("modalRoadmapBody");
 
     // Local cached student profiles
     let loadedStudents = [];
@@ -98,6 +105,12 @@ document.addEventListener("DOMContentLoaded", () => {
         const skillsContainer = document.getElementById("summarySkills");
         skillsContainer.innerHTML = "";
 
+        const numSkills = student.skills ? student.skills.length : 0;
+        const countEl = document.getElementById("summarySkillsCount");
+        if (countEl) {
+            countEl.textContent = `${numSkills} Skills Listed:`;
+        }
+
         if (student.skills && student.skills.length > 0) {
             student.skills.forEach((s) => {
                 const pill = document.createElement("span");
@@ -133,7 +146,7 @@ document.addEventListener("DOMContentLoaded", () => {
         try {
             const data = await API.getRecommendations({ student_id: studentId });
 
-            renderResults(data);
+            renderResults(data, studentId);
 
             resultsSection.classList.remove("hidden");
         } catch (err) {
@@ -147,9 +160,10 @@ document.addEventListener("DOMContentLoaded", () => {
     // -------------------------------------------------------------------------
     // 4. Safe DOM Rendering of Recommendation Results
     // -------------------------------------------------------------------------
-    function renderResults(data) {
+    function renderResults(data, currentStudentId) {
         const eligible = data.eligible_recommendations || [];
         const ineligible = data.ineligible_listings || [];
+        const studentId = currentStudentId || data.student_id;
 
         resultsMeta.textContent = `Evaluated ${data.total_evaluated} sample opportunities for ${data.student_name}. Found ${data.eligible_count} eligible and ${data.ineligible_count} disqualified.`;
         countEligible.textContent = eligible.length;
@@ -160,7 +174,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (eligible.length > 0) {
             emptyEligibleState.classList.add("hidden");
             eligible.forEach((rec) => {
-                eligibleCardsContainer.appendChild(createEligibleCard(rec));
+                eligibleCardsContainer.appendChild(createEligibleCard(rec, studentId));
             });
         } else {
             emptyEligibleState.classList.remove("hidden");
@@ -171,7 +185,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (ineligible.length > 0) {
             emptyIneligibleState.classList.add("hidden");
             ineligible.forEach((rec) => {
-                ineligibleCardsContainer.appendChild(createIneligibleCard(rec));
+                ineligibleCardsContainer.appendChild(createIneligibleCard(rec, studentId));
             });
         } else {
             emptyIneligibleState.classList.remove("hidden");
@@ -181,11 +195,34 @@ document.addEventListener("DOMContentLoaded", () => {
         switchTab("eligible");
     }
 
-    function createEligibleCard(rec) {
+    function getImpactBadgeClass(impactLevel) {
+        switch (impactLevel) {
+            case "High Positive Impact":
+                return "badge-impact badge-impact-high";
+            case "Moderate Positive Impact":
+                return "badge-impact badge-impact-moderate";
+            case "Low Positive Impact":
+                return "badge-impact badge-impact-low";
+            case "Disqualified":
+                return "badge-impact badge-impact-disqualified";
+            default:
+                return "badge-impact badge-impact-zero";
+        }
+    }
+
+    function getMatchTier(score) {
+        const s = Number(score);
+        if (s >= 75) return { label: "Strong Match", className: "badge-tier badge-tier-strong" };
+        if (s >= 50) return { label: "Moderate Match", className: "badge-tier badge-tier-moderate" };
+        if (s > 0) return { label: "Partial Match", className: "badge-tier badge-tier-partial" };
+        return { label: "Disqualified", className: "badge-tier badge-tier-disqualified" };
+    }
+
+    function createEligibleCard(rec, studentId) {
         const card = document.createElement("article");
         card.className = "opp-card";
 
-        // Header
+        // 1. Header (Title, Organization, Location, Score & Tier)
         const header = document.createElement("div");
         header.className = "opp-header";
 
@@ -193,33 +230,43 @@ document.addEventListener("DOMContentLoaded", () => {
         const title = document.createElement("h3");
         title.className = "opp-title";
         title.textContent = rec.internship_title;
+
         const org = document.createElement("div");
         org.className = "opp-org";
-        org.textContent = rec.organization;
+        const metaParts = [rec.organization];
+        if (rec.location) metaParts.push(rec.location);
+        if (rec.work_mode) metaParts.push(rec.work_mode);
+        org.textContent = metaParts.join(" • ");
+
         titleBox.appendChild(title);
         titleBox.appendChild(org);
 
-        // Score display
+        // Score display with qualitative match tier badge
         const scoreBox = document.createElement("div");
         scoreBox.className = "score-display";
+
         const scoreNum = document.createElement("div");
         scoreNum.className = "score-number";
-        scoreNum.textContent = rec.total_score.toFixed(1);
+        scoreNum.textContent = Number(rec.total_score).toFixed(1);
+
         const scoreDenom = document.createElement("div");
         scoreDenom.className = "score-denom";
         scoreDenom.textContent = "/ 100";
-        const scoreLbl = document.createElement("div");
-        scoreLbl.className = "score-label";
-        scoreLbl.textContent = "Match Score";
+
+        const tierInfo = getMatchTier(rec.total_score);
+        const tierBadge = document.createElement("div");
+        tierBadge.className = tierInfo.className;
+        tierBadge.textContent = tierInfo.label;
+
         scoreBox.appendChild(scoreNum);
         scoreBox.appendChild(scoreDenom);
-        scoreBox.appendChild(scoreLbl);
+        scoreBox.appendChild(tierBadge);
 
         header.appendChild(titleBox);
         header.appendChild(scoreBox);
         card.appendChild(header);
 
-        // Demo Badge
+        // Demonstration Badge
         if (rec.is_demo) {
             const demoBadge = document.createElement("span");
             demoBadge.className = "badge-demo";
@@ -229,105 +276,314 @@ document.addEventListener("DOMContentLoaded", () => {
             card.appendChild(demoBadge);
         }
 
-        // Score Breakdown Accordion
-        const breakdownToggle = document.createElement("button");
-        breakdownToggle.className = "breakdown-toggle";
-        breakdownToggle.type = "button";
-        breakdownToggle.textContent = "View Score Breakdown (4 Factors) ▼";
+        // 2. Recommendation Explanation Rationale (Always Visible)
+        if (rec.explanation) {
+            const exp = rec.explanation;
+            const expBox = document.createElement("div");
+            expBox.className = "explanation-box";
 
+            // Headline
+            const headlineEl = document.createElement("div");
+            headlineEl.className = "explanation-headline";
+            headlineEl.textContent = exp.headline || "Recommendation Rationale";
+            expBox.appendChild(headlineEl);
+
+            // Strongest Factors Tags
+            if (exp.strongest_factors && exp.strongest_factors.length > 0) {
+                const sRow = document.createElement("div");
+                sRow.className = "strongest-factors-row";
+                const sLbl = document.createElement("span");
+                sLbl.className = "strongest-factors-label";
+                sLbl.textContent = "Top Scoring Drivers:";
+                sRow.appendChild(sLbl);
+
+                exp.strongest_factors.forEach((fName) => {
+                    const sPill = document.createElement("span");
+                    sPill.className = "pill-strongest";
+                    sPill.textContent = `★ ${fName}`;
+                    sRow.appendChild(sPill);
+                });
+                expBox.appendChild(sRow);
+            }
+
+            // Semantic Fallback Notice if triggered
+            if (exp.fallback_summary) {
+                const fbBox = document.createElement("div");
+                fbBox.style.fontSize = "0.75rem";
+                fbBox.style.color = "var(--warning)";
+                fbBox.style.marginTop = "0.35rem";
+                fbBox.textContent = `⚡ System Notice: ${exp.fallback_summary}`;
+                expBox.appendChild(fbBox);
+            }
+
+            card.appendChild(expBox);
+        }
+
+        // 3. Concise Roadmap Summary Bar (Always Visible)
+        const rmSummaryCard = document.createElement("div");
+        rmSummaryCard.className = "roadmap-summary-card";
+
+        const rmText = document.createElement("div");
+        rmText.className = "roadmap-summary-card-text";
+
+        const rmTitle = document.createElement("div");
+        rmTitle.className = "roadmap-summary-card-title";
+        const totalDuration = rec.roadmap ? (rec.roadmap.estimated_total_duration || "Self-paced estimate") : "Self-paced estimate";
+        rmTitle.textContent = `⏱ Actionable Learning Roadmap: ${totalDuration}`;
+
+        const rmMeta = document.createElement("div");
+        rmMeta.className = "roadmap-summary-card-meta";
+        const stepCount = rec.roadmap ? rec.roadmap.total_steps : 0;
+        const metaBits = [`${stepCount} Pedagogical Steps`];
+        if (rec.roadmap && rec.roadmap.injected_prerequisites_count > 0) {
+            metaBits.push(`${rec.roadmap.injected_prerequisites_count} Foundational Prerequisite Injected`);
+        }
+        if (rec.roadmap && rec.roadmap.is_fully_qualified) {
+            metaBits.push("100% Skills Matched (Interview Readiness Plan)");
+        }
+        rmMeta.textContent = metaBits.join(" • ");
+
+        rmText.appendChild(rmTitle);
+        rmText.appendChild(rmMeta);
+        rmSummaryCard.appendChild(rmText);
+
+        const openModalBtn = document.createElement("button");
+        openModalBtn.type = "button";
+        openModalBtn.className = "btn-roadmap-primary";
+        openModalBtn.textContent = "🗺 Open Full Learning Roadmap Dialog ➔";
+        openModalBtn.addEventListener("click", () => {
+            openRoadmapModal(studentId, rec.internship_id, openModalBtn);
+        });
+        rmSummaryCard.appendChild(openModalBtn);
+
+        card.appendChild(rmSummaryCard);
+
+        // 4. Progressive Disclosure Controls Row
+        const actionsRow = document.createElement("div");
+        actionsRow.className = "card-actions-row";
+
+        const gaps = rec.skill_gaps || {};
+        const matchedReq = gaps.matched_required_skills || [];
+        const missingReq = gaps.missing_required_skills || [];
+        const matchedPref = gaps.matched_preferred_skills || [];
+        const missingPref = gaps.missing_preferred_skills || [];
+
+        const totalMatched = matchedReq.length + matchedPref.length;
+        const totalGaps = missingReq.length + missingPref.length;
+
+        const factorDrawerId = `factor-drawer-${rec.internship_id}`;
+        const skillDrawerId = `skill-drawer-${rec.internship_id}`;
+
+        const factorToggleBtn = document.createElement("button");
+        factorToggleBtn.type = "button";
+        factorToggleBtn.className = "btn-accordion-toggle";
+        factorToggleBtn.textContent = "📊 View Factor Attribution (5 Factors) ▼";
+        factorToggleBtn.setAttribute("aria-expanded", "false");
+        factorToggleBtn.setAttribute("aria-controls", factorDrawerId);
+
+        const skillToggleBtn = document.createElement("button");
+        skillToggleBtn.type = "button";
+        skillToggleBtn.className = "btn-accordion-toggle";
+        skillToggleBtn.textContent = `🔍 View Skill Gap Analysis (${totalMatched} Matched • ${totalGaps} Gaps) ▼`;
+        skillToggleBtn.setAttribute("aria-expanded", "false");
+        skillToggleBtn.setAttribute("aria-controls", skillDrawerId);
+
+        actionsRow.appendChild(factorToggleBtn);
+        actionsRow.appendChild(skillToggleBtn);
+        card.appendChild(actionsRow);
+
+        // 5. Drawer 1: Factor Attribution Breakdown (Expandable)
         const breakdownBox = document.createElement("div");
         breakdownBox.className = "breakdown-box hidden";
+        breakdownBox.id = factorDrawerId;
 
-        const bd = rec.score_breakdown;
-        const factors = [
-            { label: "Required Skills (45%)", data: bd.required_skills },
-            { label: "Preferred Skills (15%)", data: bd.preferred_skills },
-            { label: "Academic Alignment (20%)", data: bd.academic_alignment },
-            { label: "Location & Mode Match (20%)", data: bd.location_alignment },
-        ];
+        if (rec.explanation && rec.explanation.factors) {
+            const factorsMap = rec.explanation.factors;
+            const factorKeys = Object.keys(factorsMap);
 
-        factors.forEach((f) => {
-            const row = document.createElement("div");
-            row.className = "breakdown-row";
+            factorKeys.forEach((key) => {
+                const factor = factorsMap[key];
+                const row = document.createElement("div");
+                row.className = "breakdown-row";
 
-            const hdr = document.createElement("div");
-            hdr.className = "breakdown-header";
-            const lbl = document.createElement("span");
-            lbl.textContent = f.label;
-            const pts = document.createElement("span");
-            pts.textContent = `${f.data.points.toFixed(1)} / ${f.data.max_points.toFixed(1)} pts`;
-            hdr.appendChild(lbl);
-            hdr.appendChild(pts);
+                const hdr = document.createElement("div");
+                hdr.className = "breakdown-header";
 
-            const track = document.createElement("div");
-            track.className = "progress-track";
-            const fill = document.createElement("div");
-            fill.className = "progress-fill";
-            const pct = f.data.max_points > 0 ? (f.data.points / f.data.max_points) * 100 : 0;
-            fill.style.width = `${Math.min(100, Math.max(0, pct))}%`;
-            track.appendChild(fill);
+                const lblBox = document.createElement("span");
+                lblBox.textContent = `${factor.display_name} (${Number(factor.weight_percentage).toFixed(0)}%)`;
 
-            const detail = document.createElement("div");
-            detail.className = "breakdown-detail";
-            detail.textContent = f.data.details;
+                const rightBox = document.createElement("span");
+                rightBox.style.display = "inline-flex";
+                rightBox.style.alignItems = "center";
+                rightBox.style.gap = "0.5rem";
 
-            row.appendChild(hdr);
-            row.appendChild(track);
-            row.appendChild(detail);
-            breakdownBox.appendChild(row);
-        });
+                const ptsBox = document.createElement("span");
+                ptsBox.textContent = `${Number(factor.points_earned).toFixed(1)} / ${Number(factor.max_points).toFixed(1)} pts`;
+                rightBox.appendChild(ptsBox);
 
-        breakdownToggle.addEventListener("click", () => {
+                const impactBadge = document.createElement("span");
+                impactBadge.className = getImpactBadgeClass(factor.impact_level);
+                impactBadge.textContent = factor.impact_level;
+                rightBox.appendChild(impactBadge);
+
+                hdr.appendChild(lblBox);
+                hdr.appendChild(rightBox);
+
+                // Progress Bar
+                const track = document.createElement("div");
+                track.className = "progress-track";
+                const fill = document.createElement("div");
+                fill.className = "progress-fill";
+                const pct = factor.max_points > 0 ? (factor.points_earned / factor.max_points) * 100 : 0;
+                fill.style.width = `${Math.min(100, Math.max(0, pct))}%`;
+
+                if (factor.impact_level === "High Positive Impact") {
+                    fill.style.backgroundColor = "var(--success)";
+                } else if (factor.impact_level === "Moderate Positive Impact") {
+                    fill.style.backgroundColor = "var(--info)";
+                } else {
+                    fill.style.backgroundColor = "var(--secondary)";
+                }
+                track.appendChild(fill);
+
+                // Summary detail
+                const detail = document.createElement("div");
+                detail.className = "breakdown-detail";
+                detail.textContent = factor.summary;
+
+                row.appendChild(hdr);
+                row.appendChild(track);
+                row.appendChild(detail);
+
+                // Semantic AI disclosures
+                if (key === "semantic_similarity" && factor.details) {
+                    if (factor.details.fallback_applied) {
+                        const fbPill = document.createElement("span");
+                        fbPill.className = "pill pill-neutral";
+                        fbPill.style.marginTop = "0.3rem";
+                        fbPill.style.display = "inline-block";
+                        fbPill.textContent = "Fallback Active: Scored with 4 Baseline Heuristic Weights";
+                        row.appendChild(fbPill);
+                    } else if (factor.details.raw_similarity > 0) {
+                        const metaBox = document.createElement("div");
+                        metaBox.style.marginTop = "0.3rem";
+                        metaBox.style.display = "flex";
+                        metaBox.style.gap = "0.5rem";
+                        metaBox.style.alignItems = "center";
+                        metaBox.style.flexWrap = "wrap";
+
+                        const alignBadge = document.createElement("span");
+                        alignBadge.className = "pill pill-neutral";
+                        alignBadge.textContent = `Alignment: ${factor.details.qualitative_label || "Evaluated"}`;
+
+                        const cosText = document.createElement("span");
+                        cosText.style.fontSize = "0.75rem";
+                        cosText.style.color = "var(--text-muted)";
+                        cosText.textContent = `Cosine Sim: ${Number(factor.details.raw_similarity).toFixed(4)}`;
+
+                        metaBox.appendChild(alignBadge);
+                        metaBox.appendChild(cosText);
+                        row.appendChild(metaBox);
+                    }
+
+                    if (factor.details.notice) {
+                        const nEl = document.createElement("div");
+                        nEl.className = "field-hint";
+                        nEl.style.marginTop = "0.3rem";
+                        nEl.style.fontSize = "0.72rem";
+                        nEl.style.fontStyle = "italic";
+                        nEl.textContent = factor.details.notice;
+                        row.appendChild(nEl);
+                    }
+                }
+
+                breakdownBox.appendChild(row);
+            });
+
+            // Ethical Notice
+            if (rec.explanation.ethical_notice) {
+                const ethBox = document.createElement("div");
+                ethBox.className = "ethical-notice-box";
+                ethBox.textContent = rec.explanation.ethical_notice;
+                breakdownBox.appendChild(ethBox);
+            }
+        }
+
+        factorToggleBtn.addEventListener("click", () => {
             const isHidden = breakdownBox.classList.contains("hidden");
             if (isHidden) {
                 breakdownBox.classList.remove("hidden");
-                breakdownToggle.textContent = "Hide Score Breakdown ▲";
+                factorToggleBtn.classList.add("active");
+                factorToggleBtn.setAttribute("aria-expanded", "true");
+                factorToggleBtn.textContent = "📊 Hide Factor Attribution ▲";
             } else {
                 breakdownBox.classList.add("hidden");
-                breakdownToggle.textContent = "View Score Breakdown (4 Factors) ▼";
+                factorToggleBtn.classList.remove("active");
+                factorToggleBtn.setAttribute("aria-expanded", "false");
+                factorToggleBtn.textContent = "📊 View Factor Attribution (5 Factors) ▼";
             }
         });
 
-        card.appendChild(breakdownToggle);
         card.appendChild(breakdownBox);
 
-        // Skill Gaps Section
-        const skillsSection = document.createElement("div");
-        skillsSection.style.marginTop = "0.75rem";
-        skillsSection.style.paddingTop = "0.75rem";
-        skillsSection.style.borderTop = "1px solid var(--border-color)";
+        // 6. Drawer 2: Skill Gaps Section (4 Distinct Categories)
+        const skillGapsDrawer = document.createElement("div");
+        skillGapsDrawer.className = "skill-gaps-drawer hidden";
+        skillGapsDrawer.id = skillDrawerId;
 
-        const gaps = rec.skill_gaps;
+        // 1. Matched Mandatory Skills
+        skillGapsDrawer.appendChild(createSkillPillCategory(
+            "Matched Mandatory Skills:",
+            matchedReq,
+            "pill-matched-req",
+            "None currently matched"
+        ));
 
-        // Matched Required Skills
-        if (gaps.matched_required_skills && gaps.matched_required_skills.length > 0) {
-            const row = createSkillPillRow("Matched Required:", gaps.matched_required_skills, "pill-matched-req");
-            skillsSection.appendChild(row);
-        }
+        // 2. Critical Gaps (Missing Mandatory — Profile Omissions)
+        skillGapsDrawer.appendChild(createSkillPillCategory(
+            "Critical Gaps (Missing Mandatory — Profile Omissions):",
+            missingReq,
+            "pill-missing-req",
+            "None! All mandatory skills matched"
+        ));
 
-        // Missing Required Skills (Critical)
-        if (gaps.missing_required_skills && gaps.missing_required_skills.length > 0) {
-            const row = createSkillPillRow("Critical Gaps (Missing Mandatory):", gaps.missing_required_skills, "pill-missing-req");
-            skillsSection.appendChild(row);
-        }
+        // 3. Matched Preferred Skills
+        skillGapsDrawer.appendChild(createSkillPillCategory(
+            "Matched Preferred Bonus Skills:",
+            matchedPref,
+            "pill-matched-pref",
+            "None"
+        ));
 
-        // Matched Preferred Skills
-        if (gaps.matched_preferred_skills && gaps.matched_preferred_skills.length > 0) {
-            const row = createSkillPillRow("Matched Preferred:", gaps.matched_preferred_skills, "pill-matched-pref");
-            skillsSection.appendChild(row);
-        }
+        // 4. Missing Preferred Skills (Growth Areas)
+        skillGapsDrawer.appendChild(createSkillPillCategory(
+            "Growth Areas (Missing Preferred):",
+            missingPref,
+            "pill-missing-pref",
+            "None"
+        ));
 
-        // Missing Preferred Skills
-        if (gaps.missing_preferred_skills && gaps.missing_preferred_skills.length > 0) {
-            const row = createSkillPillRow("Growth Areas (Missing Preferred):", gaps.missing_preferred_skills, "pill-missing-pref");
-            skillsSection.appendChild(row);
-        }
+        skillToggleBtn.addEventListener("click", () => {
+            const isHidden = skillGapsDrawer.classList.contains("hidden");
+            if (isHidden) {
+                skillGapsDrawer.classList.remove("hidden");
+                skillToggleBtn.classList.add("active");
+                skillToggleBtn.setAttribute("aria-expanded", "true");
+                skillToggleBtn.textContent = "🔍 Hide Skill Gap Analysis ▲";
+            } else {
+                skillGapsDrawer.classList.add("hidden");
+                skillToggleBtn.classList.remove("active");
+                skillToggleBtn.setAttribute("aria-expanded", "false");
+                skillToggleBtn.textContent = `🔍 View Skill Gap Analysis (${totalMatched} Matched • ${totalGaps} Gaps) ▼`;
+            }
+        });
 
-        card.appendChild(skillsSection);
+        card.appendChild(skillGapsDrawer);
+
         return card;
     }
 
-    function createIneligibleCard(rec) {
+    function createIneligibleCard(rec, studentId) {
         const card = document.createElement("article");
         card.className = "opp-card";
         card.style.borderColor = "#fecaca";
@@ -340,9 +596,14 @@ document.addEventListener("DOMContentLoaded", () => {
         const title = document.createElement("h3");
         title.className = "opp-title";
         title.textContent = rec.internship_title;
+
         const org = document.createElement("div");
         org.className = "opp-org";
-        org.textContent = rec.organization;
+        const metaParts = [rec.organization];
+        if (rec.location) metaParts.push(rec.location);
+        if (rec.work_mode) metaParts.push(rec.work_mode);
+        org.textContent = metaParts.join(" • ");
+
         titleBox.appendChild(title);
         titleBox.appendChild(org);
 
@@ -352,11 +613,18 @@ document.addEventListener("DOMContentLoaded", () => {
         scoreNum.className = "score-number";
         scoreNum.style.color = "var(--danger)";
         scoreNum.textContent = "0.0";
-        const scoreLbl = document.createElement("div");
-        scoreLbl.className = "score-label";
-        scoreLbl.textContent = "Disqualified";
+
+        const scoreDenom = document.createElement("div");
+        scoreDenom.className = "score-denom";
+        scoreDenom.textContent = "/ 100";
+
+        const tierBadge = document.createElement("div");
+        tierBadge.className = "badge-tier badge-tier-disqualified";
+        tierBadge.textContent = "Disqualified";
+
         scoreBox.appendChild(scoreNum);
-        scoreBox.appendChild(scoreLbl);
+        scoreBox.appendChild(scoreDenom);
+        scoreBox.appendChild(tierBadge);
 
         header.appendChild(titleBox);
         header.appendChild(scoreBox);
@@ -388,40 +656,494 @@ document.addEventListener("DOMContentLoaded", () => {
             rList.appendChild(li);
         });
 
+        const clarifNotice = document.createElement("div");
+        clarifNotice.style.fontSize = "0.75rem";
+        clarifNotice.style.marginTop = "0.5rem";
+        clarifNotice.style.fontWeight = "600";
+        clarifNotice.style.color = "#7f1d1d";
+        clarifNotice.textContent = "Important: Learning the missing skills does not automatically resolve academic, graduation-year, major, or work-mode restrictions.";
+
         callout.appendChild(rTitle);
         callout.appendChild(rList);
+        callout.appendChild(clarifNotice);
         card.appendChild(callout);
+
+        // Skill Gaps (Progressive Disclosure)
+        const gaps = rec.skill_gaps || {};
+        const matchedReq = gaps.matched_required_skills || [];
+        const missingReq = gaps.missing_required_skills || [];
+        const matchedPref = gaps.matched_preferred_skills || [];
+        const missingPref = gaps.missing_preferred_skills || [];
+
+        const totalMatched = matchedReq.length + matchedPref.length;
+        const totalGaps = missingReq.length + missingPref.length;
+
+        const actionsRow = document.createElement("div");
+        actionsRow.className = "card-actions-row";
+
+        const ineligSkillDrawerId = `inelig-skill-drawer-${rec.internship_id}`;
+
+        const skillToggleBtn = document.createElement("button");
+        skillToggleBtn.type = "button";
+        skillToggleBtn.className = "btn-accordion-toggle";
+        skillToggleBtn.textContent = `🔍 View Skill Gap Analysis (${totalMatched} Matched • ${totalGaps} Gaps) ▼`;
+        skillToggleBtn.setAttribute("aria-expanded", "false");
+        skillToggleBtn.setAttribute("aria-controls", ineligSkillDrawerId);
+
+        const planBtn = document.createElement("button");
+        planBtn.className = "btn-roadmap-modal btn-roadmap-modal-disqualified";
+        planBtn.type = "button";
+        planBtn.textContent = "📖 Inspect Skill Learning Plan (Educational Only)";
+        planBtn.addEventListener("click", () => {
+            openRoadmapModal(studentId, rec.internship_id, planBtn);
+        });
+
+        actionsRow.appendChild(skillToggleBtn);
+        actionsRow.appendChild(planBtn);
+        card.appendChild(actionsRow);
+
+        const skillGapsDrawer = document.createElement("div");
+        skillGapsDrawer.className = "skill-gaps-drawer hidden";
+        skillGapsDrawer.id = ineligSkillDrawerId;
+
+        skillGapsDrawer.appendChild(createSkillPillCategory("Matched Mandatory Skills:", matchedReq, "pill-matched-req", "None"));
+        skillGapsDrawer.appendChild(createSkillPillCategory("Critical Gaps (Missing Mandatory — Profile Omissions):", missingReq, "pill-missing-req", "None"));
+        skillGapsDrawer.appendChild(createSkillPillCategory("Matched Preferred Bonus Skills:", matchedPref, "pill-matched-pref", "None"));
+        skillGapsDrawer.appendChild(createSkillPillCategory("Growth Areas (Missing Preferred):", missingPref, "pill-missing-pref", "None"));
+
+        skillToggleBtn.addEventListener("click", () => {
+            const isHidden = skillGapsDrawer.classList.contains("hidden");
+            if (isHidden) {
+                skillGapsDrawer.classList.remove("hidden");
+                skillToggleBtn.classList.add("active");
+                skillToggleBtn.setAttribute("aria-expanded", "true");
+                skillToggleBtn.textContent = "🔍 Hide Skill Gap Analysis ▲";
+            } else {
+                skillGapsDrawer.classList.add("hidden");
+                skillToggleBtn.classList.remove("active");
+                skillToggleBtn.setAttribute("aria-expanded", "false");
+                skillToggleBtn.textContent = `🔍 View Skill Gap Analysis (${totalMatched} Matched • ${totalGaps} Gaps) ▼`;
+            }
+        });
+
+        card.appendChild(skillGapsDrawer);
 
         return card;
     }
 
-    function createSkillPillRow(label, skills, pillClass) {
+    function createSkillPillCategory(label, skills, pillClass, emptyNote) {
         const container = document.createElement("div");
-        container.style.marginBottom = "0.4rem";
+        container.className = "skill-gap-category";
+
+        const headerRow = document.createElement("div");
+        headerRow.className = "skill-gap-category-header";
 
         const lbl = document.createElement("span");
-        lbl.style.fontSize = "0.75rem";
-        lbl.style.fontWeight = "600";
-        lbl.style.color = "var(--text-muted)";
         lbl.textContent = label;
-        container.appendChild(lbl);
+        headerRow.appendChild(lbl);
+
+        const countBadge = document.createElement("span");
+        countBadge.className = "tab-badge";
+        countBadge.textContent = skills.length;
+        headerRow.appendChild(countBadge);
+
+        container.appendChild(headerRow);
 
         const pillsDiv = document.createElement("div");
         pillsDiv.className = "pills-container";
 
-        skills.forEach((skill) => {
-            const span = document.createElement("span");
-            span.className = `pill ${pillClass}`;
-            span.textContent = skill;
-            pillsDiv.appendChild(span);
-        });
+        if (skills && skills.length > 0) {
+            skills.forEach((skill) => {
+                const span = document.createElement("span");
+                span.className = `pill ${pillClass}`;
+                span.textContent = skill;
+                pillsDiv.appendChild(span);
+            });
+        } else {
+            const emptySpan = document.createElement("span");
+            emptySpan.className = "field-hint";
+            emptySpan.style.margin = "0.2rem 0";
+            emptySpan.textContent = emptyNote;
+            pillsDiv.appendChild(emptySpan);
+        }
 
         container.appendChild(pillsDiv);
         return container;
     }
 
+    function createSkillPillRow(label, skills, pillClass) {
+        return createSkillPillCategory(label, skills, pillClass, "None");
+    }
+
     // -------------------------------------------------------------------------
-    // 5. Tabs Switching Logic
+    // 5. Shared Roadmap Timeline Renderer
+    // -------------------------------------------------------------------------
+    function renderRoadmapTimeline(roadmap) {
+        const container = document.createElement("div");
+
+        // Summary Chips
+        const metaChips = document.createElement("div");
+        metaChips.className = "roadmap-meta-chips";
+
+        const durChip = document.createElement("span");
+        durChip.className = "roadmap-chip";
+        durChip.textContent = `⏱ Duration: ${roadmap.estimated_total_duration || "Self-paced"}`;
+        metaChips.appendChild(durChip);
+
+        const stepsChip = document.createElement("span");
+        stepsChip.className = "roadmap-chip";
+        stepsChip.textContent = `📚 Steps: ${roadmap.total_steps || 0}`;
+        metaChips.appendChild(stepsChip);
+
+        if (roadmap.mandatory_steps_count !== undefined) {
+            const mandChip = document.createElement("span");
+            mandChip.className = "roadmap-chip roadmap-chip-mandatory";
+            mandChip.textContent = `Mandatory: ${roadmap.mandatory_steps_count}`;
+            metaChips.appendChild(mandChip);
+        }
+
+        if (roadmap.preferred_steps_count !== undefined) {
+            const prefChip = document.createElement("span");
+            prefChip.className = "roadmap-chip";
+            prefChip.textContent = `Preferred: ${roadmap.preferred_steps_count}`;
+            metaChips.appendChild(prefChip);
+        }
+
+        if (roadmap.injected_prerequisites_count > 0) {
+            const injChip = document.createElement("span");
+            injChip.className = "roadmap-chip roadmap-chip-injected";
+            injChip.textContent = `Injected Prerequisites: ${roadmap.injected_prerequisites_count}`;
+            metaChips.appendChild(injChip);
+        }
+
+        container.appendChild(metaChips);
+
+        // Timeline Steps
+        const timeline = document.createElement("div");
+        timeline.className = "roadmap-timeline";
+
+        const steps = roadmap.steps || [];
+        if (steps.length === 0) {
+            const emptyMsg = document.createElement("p");
+            emptyMsg.className = "field-hint";
+            emptyMsg.textContent = "No roadmap steps required for this candidate.";
+            timeline.appendChild(emptyMsg);
+        } else {
+            steps.forEach((step) => {
+                const stepItem = document.createElement("div");
+                stepItem.className = "timeline-step-item";
+
+                // Marker
+                const marker = document.createElement("div");
+                marker.className = step.is_prerequisite ? "timeline-step-marker timeline-step-marker-injected" : "timeline-step-marker";
+                marker.textContent = step.step_number || "•";
+                stepItem.appendChild(marker);
+
+                // Content Box
+                const content = document.createElement("div");
+                content.className = "timeline-step-content";
+
+                // Header
+                const sHeader = document.createElement("div");
+                sHeader.className = "step-header";
+
+                const sTitle = document.createElement("h4");
+                sTitle.className = "step-title";
+                sTitle.textContent = step.skill_name;
+                sHeader.appendChild(sTitle);
+
+                const sBadges = document.createElement("div");
+                sBadges.className = "step-badges";
+
+                if (step.phase) {
+                    const phaseBadge = document.createElement("span");
+                    phaseBadge.className = "badge-phase";
+                    phaseBadge.textContent = step.phase;
+                    sBadges.appendChild(phaseBadge);
+                }
+
+                if (step.priority) {
+                    const prioBadge = document.createElement("span");
+                    if (step.priority.includes("High") || step.priority.includes("Mandatory")) {
+                        prioBadge.className = "badge-priority-high";
+                    } else if (step.priority.includes("Medium") || step.priority.includes("Growth")) {
+                        prioBadge.className = "badge-priority-med";
+                    } else {
+                        prioBadge.className = "badge-priority-opt";
+                    }
+                    prioBadge.textContent = step.priority;
+                    sBadges.appendChild(prioBadge);
+                }
+
+                if (step.is_prerequisite) {
+                    const injBadge = document.createElement("span");
+                    injBadge.className = "badge-injected";
+                    injBadge.textContent = "Supporting Prerequisite";
+                    sBadges.appendChild(injBadge);
+                } else if (step.origin) {
+                    const origBadge = document.createElement("span");
+                    origBadge.className = "badge-phase";
+                    origBadge.textContent = step.origin;
+                    sBadges.appendChild(origBadge);
+                }
+
+                sHeader.appendChild(sBadges);
+                content.appendChild(sHeader);
+
+                // Duration
+                if (step.estimated_duration) {
+                    const dur = document.createElement("div");
+                    dur.className = "step-duration";
+                    dur.textContent = `⏱ Estimated self-study: ${step.estimated_duration}`;
+                    content.appendChild(dur);
+                }
+
+                // Rationale
+                if (step.rationale) {
+                    const rat = document.createElement("div");
+                    rat.className = "step-rationale";
+                    rat.textContent = step.rationale;
+                    content.appendChild(rat);
+                }
+
+                // Prerequisite dependencies
+                if (step.prerequisites && step.prerequisites.length > 0) {
+                    const prereqRow = document.createElement("div");
+                    prereqRow.className = "prereq-tags-row";
+                    const prereqLbl = document.createElement("span");
+                    prereqLbl.style.fontSize = "0.72rem";
+                    prereqLbl.style.fontWeight = "600";
+                    prereqLbl.style.color = "var(--text-muted)";
+                    prereqLbl.textContent = "Prerequisites: ";
+                    prereqRow.appendChild(prereqLbl);
+
+                    step.prerequisites.forEach((p) => {
+                        const tag = document.createElement("span");
+                        tag.className = "pill pill-neutral";
+                        tag.textContent = p;
+                        prereqRow.appendChild(tag);
+                    });
+                    content.appendChild(prereqRow);
+                }
+
+                // Expand/Collapse Details Button
+                const hasDetails = (step.learning_focus && step.learning_focus.length > 0) || step.practical_milestone;
+                if (hasDetails) {
+                    const toggleBtn = document.createElement("button");
+                    toggleBtn.className = "step-toggle-btn";
+                    toggleBtn.type = "button";
+                    toggleBtn.textContent = "View Focus Topics & Milestone ▼";
+
+                    const detailsBox = document.createElement("div");
+                    detailsBox.className = "step-details-box hidden";
+                    const stepDetailsId = `step-details-${step.step_number || Math.random().toString(36).substr(2, 6)}`;
+                    detailsBox.id = stepDetailsId;
+                    toggleBtn.setAttribute("aria-expanded", "false");
+                    toggleBtn.setAttribute("aria-controls", stepDetailsId);
+
+                    if (step.learning_focus && step.learning_focus.length > 0) {
+                        const focusHeading = document.createElement("div");
+                        focusHeading.className = "step-section-heading";
+                        focusHeading.textContent = "Key Technical Topics to Master:";
+                        detailsBox.appendChild(focusHeading);
+
+                        const focusList = document.createElement("ul");
+                        focusList.className = "focus-list";
+                        step.learning_focus.forEach((item) => {
+                            const li = document.createElement("li");
+                            li.textContent = item;
+                            focusList.appendChild(li);
+                        });
+                        detailsBox.appendChild(focusList);
+                    }
+
+                    if (step.practical_milestone) {
+                        const msHeading = document.createElement("div");
+                        msHeading.className = "step-section-heading";
+                        msHeading.textContent = "Hands-On Project Milestone:";
+                        detailsBox.appendChild(msHeading);
+
+                        const msBox = document.createElement("div");
+                        msBox.className = "milestone-box";
+                        msBox.textContent = `🎯 ${step.practical_milestone}`;
+                        detailsBox.appendChild(msBox);
+                    }
+
+                    toggleBtn.addEventListener("click", () => {
+                        const isHidden = detailsBox.classList.contains("hidden");
+                        if (isHidden) {
+                            detailsBox.classList.remove("hidden");
+                            toggleBtn.setAttribute("aria-expanded", "true");
+                            toggleBtn.textContent = "Hide Focus Topics & Milestone ▲";
+                        } else {
+                            detailsBox.classList.add("hidden");
+                            toggleBtn.setAttribute("aria-expanded", "false");
+                            toggleBtn.textContent = "View Focus Topics & Milestone ▼";
+                        }
+                    });
+
+                    content.appendChild(toggleBtn);
+                    content.appendChild(detailsBox);
+                }
+
+                stepItem.appendChild(content);
+                timeline.appendChild(stepItem);
+            });
+        }
+
+        container.appendChild(timeline);
+
+        // Ethical Notice
+        if (roadmap.ethical_notice) {
+            const eNotice = document.createElement("div");
+            eNotice.className = "ethical-notice-box";
+            eNotice.textContent = roadmap.ethical_notice;
+            container.appendChild(eNotice);
+        }
+
+        return container;
+    }
+
+    // -------------------------------------------------------------------------
+    // 6. Dedicated Roadmap Modal Dialog Controller (Accessible & Focus-Trapped)
+    // -------------------------------------------------------------------------
+    let lastActiveTrigger = null;
+
+    async function openRoadmapModal(studentId, internshipId, triggerElement = null) {
+        if (!roadmapModal || !modalRoadmapBody) return;
+
+        lastActiveTrigger = triggerElement || document.activeElement;
+
+        modalRoadmapBody.innerHTML = "";
+        modalRoadmapTitle.textContent = "Personalized Learning Roadmap";
+        modalRoadmapSubtitle.textContent = "Retrieving student profile and calculating progression...";
+        roadmapModal.classList.remove("hidden");
+
+        if (closeRoadmapModalBtn) {
+            closeRoadmapModalBtn.focus();
+        }
+
+        // Spinner state
+        const spinnerBox = document.createElement("div");
+        spinnerBox.className = "loading-state";
+        const spinner = document.createElement("div");
+        spinner.className = "spinner";
+        const loadingText = document.createElement("p");
+        loadingText.textContent = "Computing deterministic prerequisite DAG and self-study milestones...";
+        spinnerBox.appendChild(spinner);
+        spinnerBox.appendChild(loadingText);
+        modalRoadmapBody.appendChild(spinnerBox);
+
+        try {
+            const data = await API.getRoadmap(studentId, internshipId);
+            modalRoadmapBody.innerHTML = "";
+
+            modalRoadmapTitle.textContent = `${data.internship_title} — Learning Roadmap`;
+            modalRoadmapSubtitle.textContent = `Personalized for ${data.student_name} (${data.organization})`;
+
+            // Eligibility context callout
+            if (!data.is_eligible) {
+                const callout = document.createElement("div");
+                callout.className = "educational-callout educational-callout-warning";
+                const cHeading = document.createElement("strong");
+                cHeading.textContent = "Educational Learning Plan Only: ";
+                const cText = document.createElement("span");
+                cText.textContent = "The candidate does not currently satisfy mandatory eligibility requirements for this position. This curriculum is provided for self-study and skill growth only; learning these competencies does not confer eligibility.";
+                callout.appendChild(cHeading);
+                callout.appendChild(cText);
+
+                if (data.eligibility && data.eligibility.rejection_reasons && data.eligibility.rejection_reasons.length > 0) {
+                    const rList = document.createElement("ul");
+                    rList.style.marginTop = "0.35rem";
+                    rList.style.paddingLeft = "1.2rem";
+                    data.eligibility.rejection_reasons.forEach((r) => {
+                        const li = document.createElement("li");
+                        li.textContent = r;
+                        rList.appendChild(li);
+                    });
+                    callout.appendChild(rList);
+                }
+                modalRoadmapBody.appendChild(callout);
+            } else {
+                const callout = document.createElement("div");
+                callout.className = "educational-callout";
+                const cHeading = document.createElement("strong");
+                cHeading.textContent = "Personalized Curriculum: ";
+                const cText = document.createElement("span");
+                cText.textContent = "Sequenced using transitive prerequisite dependency analysis and priority weighting for this specific student-internship pair.";
+                callout.appendChild(cHeading);
+                callout.appendChild(cText);
+                modalRoadmapBody.appendChild(callout);
+            }
+
+            if (data.roadmap) {
+                modalRoadmapBody.appendChild(renderRoadmapTimeline(data.roadmap));
+            } else {
+                const emptyP = document.createElement("p");
+                emptyP.className = "field-hint";
+                emptyP.textContent = "No roadmap data was returned for this opportunity.";
+                modalRoadmapBody.appendChild(emptyP);
+            }
+
+        } catch (err) {
+            modalRoadmapBody.innerHTML = "";
+            modalRoadmapSubtitle.textContent = "Unable to load roadmap";
+            const errAlert = document.createElement("div");
+            errAlert.className = "alert alert-error";
+            errAlert.textContent = `Failed to load learning roadmap: ${err.message}`;
+            modalRoadmapBody.appendChild(errAlert);
+        }
+    }
+
+    function closeRoadmapModal() {
+        if (roadmapModal) {
+            roadmapModal.classList.add("hidden");
+        }
+        if (lastActiveTrigger && typeof lastActiveTrigger.focus === "function") {
+            lastActiveTrigger.focus();
+        }
+        lastActiveTrigger = null;
+    }
+
+    if (closeRoadmapModalBtn) {
+        closeRoadmapModalBtn.addEventListener("click", closeRoadmapModal);
+    }
+
+    if (roadmapModal) {
+        roadmapModal.addEventListener("click", (e) => {
+            if (e.target === roadmapModal) {
+                closeRoadmapModal();
+            }
+        });
+
+        // Accessible Focus Trapping inside Roadmap Modal
+        roadmapModal.addEventListener("keydown", (e) => {
+            if (e.key === "Tab") {
+                const focusable = Array.from(
+                    roadmapModal.querySelectorAll('button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')
+                ).filter((el) => el.offsetParent !== null);
+                if (focusable.length === 0) return;
+                const firstEl = focusable[0];
+                const lastEl = focusable[focusable.length - 1];
+                if (e.shiftKey && document.activeElement === firstEl) {
+                    e.preventDefault();
+                    lastEl.focus();
+                } else if (!e.shiftKey && document.activeElement === lastEl) {
+                    e.preventDefault();
+                    firstEl.focus();
+                }
+            }
+        });
+    }
+
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && roadmapModal && !roadmapModal.classList.contains("hidden")) {
+            closeRoadmapModal();
+        }
+    });
+
+    // -------------------------------------------------------------------------
+    // 7. Tabs Switching Logic
     // -------------------------------------------------------------------------
     tabEligible.addEventListener("click", () => switchTab("eligible"));
     tabIneligible.addEventListener("click", () => switchTab("ineligible"));
@@ -445,7 +1167,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // -------------------------------------------------------------------------
-    // 6. Alert Helpers
+    // 8. Alert Helpers
     // -------------------------------------------------------------------------
     function showAlert(message, type = "error") {
         alertBox.textContent = message;

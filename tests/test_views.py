@@ -103,7 +103,7 @@ class TestFrontendViews(unittest.TestCase):
 
     def test_static_scripts_served(self):
         """GET /static/js/*.js should return JavaScript assets with 200 status."""
-        for script_name in ["api.js", "dashboard.js", "profile.js"]:
+        for script_name in ["api.js", "dashboard.js", "profile.js", "internships.js"]:
             response = self.client.get(f"/static/js/{script_name}")
             self.assertEqual(response.status_code, 200, f"Failed to serve /static/js/{script_name}")
             self.assertGreater(len(response.data), 0)
@@ -113,6 +113,107 @@ class TestFrontendViews(unittest.TestCase):
         """GET /nonexistent should return 404 Not Found."""
         response = self.client.get("/nonexistent-page-url")
         self.assertEqual(response.status_code, 404)
+
+    def test_dashboard_includes_roadmap_modal(self):
+        """GET / should render the dedicated roadmap modal dialog container and close button."""
+        response = self.client.get("/")
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn('id="roadmapModal"', html)
+        self.assertIn('id="closeRoadmapModalBtn"', html)
+        self.assertIn('id="modalRoadmapTitle"', html)
+        self.assertIn('id="modalRoadmapBody"', html)
+        self.assertIn('role="dialog"', html)
+        self.assertIn('aria-modal="true"', html)
+
+    def test_stylesheet_includes_milestone_7_styles(self):
+        """GET /static/css/styles.css should include Milestone 7.4 explanation, timeline, and modal classes."""
+        response = self.client.get("/static/css/styles.css")
+        self.assertEqual(response.status_code, 200)
+        css = response.get_data(as_text=True)
+        response.close()
+        self.assertIn(".explanation-box", css)
+        self.assertIn(".badge-impact-high", css)
+        self.assertIn(".roadmap-timeline", css)
+        self.assertIn(".badge-injected", css)
+        self.assertIn(".modal-backdrop", css)
+
+    def test_internships_view_renders_successfully(self):
+        """GET /internships should render catalog HTML with search and filter controls."""
+        response = self.client.get("/internships")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("text/html", response.content_type)
+        html = response.get_data(as_text=True)
+        self.assertIn("Available Internship Opportunities", html)
+        self.assertIn("internshipSearchInput", html)
+        self.assertIn("clearFiltersBtn", html)
+        self.assertIn("internshipStudentSelect", html)
+        self.assertIn("internshipsGrid", html)
+        self.assertIn("countModeAll", html)
+        self.assertIn("countModeRemote", html)
+        self.assertIn("internships.js", html)
+
+    def test_navbar_includes_internships_link(self):
+        """Navbar should include Discovery Dashboard, Internships, and Student Profile links."""
+        response = self.client.get("/")
+        html = response.get_data(as_text=True)
+        self.assertIn('href="/"', html)
+        self.assertIn('href="/internships"', html)
+        self.assertIn('href="/profile"', html)
+        self.assertIn("Internships", html)
+
+    def test_stylesheet_includes_catalog_styles(self):
+        """GET /static/css/styles.css should include catalog and toolbar classes."""
+        response = self.client.get("/static/css/styles.css")
+        self.assertEqual(response.status_code, 200)
+        css = response.get_data(as_text=True)
+        response.close()
+        self.assertIn(".catalog-toolbar-card", css)
+        self.assertIn(".internship-catalog-card", css)
+        self.assertIn(".badge-workmode", css)
+        self.assertIn(".catalog-specs-grid", css)
+        self.assertIn(".catalog-details-drawer", css)
+
+    def test_dashboard_includes_compact_profile_bar_elements(self):
+        """GET / should render compact profile bar markup with preserved student metadata IDs."""
+        response = self.client.get("/")
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn("student-compact-bar", html)
+        self.assertIn('id="summaryName"', html)
+        self.assertIn('id="summaryMajor"', html)
+        self.assertIn('id="summaryCgpa"', html)
+        self.assertIn('id="summaryGradYear"', html)
+        self.assertIn('id="summaryWorkMode"', html)
+        self.assertIn('id="summaryLocation"', html)
+        self.assertIn('id="summarySkills"', html)
+        self.assertIn('id="summarySkillsCount"', html)
+        self.assertIn('id="editProfileLink"', html)
+
+    def test_stylesheet_includes_milestone_b_styles(self):
+        """GET /static/css/styles.css should include Milestone B compact profile and progressive disclosure styles."""
+        response = self.client.get("/static/css/styles.css")
+        self.assertEqual(response.status_code, 200)
+        css = response.get_data(as_text=True)
+        response.close()
+        self.assertIn(".student-compact-bar", css)
+        self.assertIn(".badge-tier-strong", css)
+        self.assertIn(".roadmap-summary-card", css)
+        self.assertIn(".btn-roadmap-primary", css)
+        self.assertIn(".card-actions-row", css)
+        self.assertIn(".btn-accordion-toggle", css)
+        self.assertIn(".skill-gaps-drawer", css)
+
+    def test_stylesheet_includes_milestone_c_accessibility_and_responsive_styles(self):
+        """GET /static/css/styles.css should include Milestone C accessibility focus states and responsive queries."""
+        response = self.client.get("/static/css/styles.css")
+        self.assertEqual(response.status_code, 200)
+        css = response.get_data(as_text=True)
+        response.close()
+        self.assertIn(":focus-visible", css)
+        self.assertIn(".modal-close-btn:focus-visible", css)
+        self.assertIn("@media (max-width: 768px)", css)
+        self.assertIn("@media (max-width: 480px)", css)
 
 
 if __name__ == "__main__":

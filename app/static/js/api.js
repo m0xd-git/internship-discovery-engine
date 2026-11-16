@@ -64,4 +64,9 @@ const API = {
             body: JSON.stringify(payload),
         });
     },
+
+    // Learning Roadmaps
+    async getRoadmap(studentId, internshipId) {
+        return apiRequest(`/api/students/${studentId}/roadmap/${internshipId}`);
+    },
 };

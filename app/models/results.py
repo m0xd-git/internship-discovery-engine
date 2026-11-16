@@ -13,7 +13,7 @@ from current student profiles, internship requirements, and scoring weights.
 """
 
 from dataclasses import dataclass, field, asdict
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 
 @dataclass
@@ -82,11 +82,71 @@ class ScoreBreakdown:
 
 
 @dataclass
+class FactorExplanation:
+    """
+    Transparent explanation for a single recommendation scoring factor.
+    Captures points earned, maximum possible points, qualitative impact level,
+    and factual human-readable summary.
+    """
+    factor_key: str                     # e.g. "required_skills", "preferred_skills", "academic_alignment", etc.
+    display_name: str                   # e.g. "Mandatory Required Skills"
+    points_earned: float                # Points awarded (0.0 to max_points)
+    max_points: float                   # Maximum available points
+    weight_percentage: float            # Configured weight as a percentage (e.g. 30.0 for 30%)
+    impact_level: str                   # "High Positive Impact", "Moderate Positive Impact", "Low Positive Impact", "Zero Contribution", or "Disqualified"
+    summary: str                        # Plain-language explanation grounded in evidence
+    details: Dict[str, Any] = field(default_factory=dict) # Structured metadata
+    is_strongest_factor: bool = False   # True if this factor contributed the most points among positive factors
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class RecommendationExplanation:
+    """
+    Comprehensive, transparent explanation payload for a recommendation result.
+    Synthesizes the rationale behind the match score, identifies driving factors,
+    explains semantic context, highlights skill gaps ethically, and isolates
+    eligibility disqualification reasons.
+    """
+    internship_id: int
+    internship_title: str
+    organization: str
+    total_score: float
+    is_eligible: bool
+    headline: str                       # High-level summary of the recommendation outcome
+    eligibility_summary: Optional[str] = None  # Explicit reasons if disqualified; None if eligible
+    fallback_summary: Optional[str] = None     # Explanation if semantic fallback occurred; None otherwise
+    strongest_factors: List[str] = field(default_factory=list) # Display names of strongest driving factors
+    factors: Dict[str, FactorExplanation] = field(default_factory=dict) # Factor explanations by key
+    ethical_notice: str = (
+        "Ethical Notice: Recommendations are evaluated strictly on declared profile information. "
+        "Missing skills reflect profile omissions, not a confirmed lack of personal ability or potential."
+    )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "internship_id": self.internship_id,
+            "internship_title": self.internship_title,
+            "organization": self.organization,
+            "total_score": round(self.total_score, 2),
+            "is_eligible": self.is_eligible,
+            "headline": self.headline,
+            "eligibility_summary": self.eligibility_summary,
+            "fallback_summary": self.fallback_summary,
+            "strongest_factors": list(self.strongest_factors),
+            "factors": {k: f.to_dict() for k, f in self.factors.items()},
+            "ethical_notice": self.ethical_notice,
+        }
+
+
+@dataclass
 class RecommendationResult:
     """
     Complete recommendation response payload for an internship.
     Bundles the internship metadata, computed eligibility status, normalized score (0-100),
-    transparent score breakdown, and skill gap report.
+    transparent score breakdown, skill gap report, rationale explanation, and learning roadmap.
     """
     student_id: int
     internship_id: int
@@ -97,6 +157,8 @@ class RecommendationResult:
     score_breakdown: ScoreBreakdown
     skill_gaps: SkillGapReport
     is_demo: bool = True                   # Transparently badges demonstration data
+    explanation: Optional[RecommendationExplanation] = None
+    roadmap: Optional['LearningRoadmap'] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -109,4 +171,67 @@ class RecommendationResult:
             "score_breakdown": self.score_breakdown.to_dict(),
             "skill_gaps": self.skill_gaps.to_dict(),
             "is_demo": self.is_demo,
+            "explanation": self.explanation.to_dict() if self.explanation else None,
+            "roadmap": self.roadmap.to_dict() if self.roadmap else None,
+        }
+
+
+@dataclass
+class RoadmapStep:
+    """
+    A single pedagogical milestone step in a personalized learning roadmap.
+    Represents an actionable self-study target for a missing competency.
+    """
+    step_number: int
+    skill_name: str
+    priority: str                       # "High (Mandatory Requirement)" vs "Medium (Growth Opportunity)" vs "Optional (Interview Readiness)"
+    phase: str                          # e.g. "Phase 1: Critical Foundation", "Phase 2: Core Requirements", "Phase 3: Growth Opportunities", "Preparation: Technical Interview Readiness"
+    estimated_duration: str             # e.g. "Approx. 1–2 weeks (self-paced estimate)"
+    learning_focus: List[str]           # Key technical concepts/topics to master
+    practical_milestone: str            # A concrete, hands-on project milestone demonstrating mastery
+    prerequisites: List[str] = field(default_factory=list) # Explicit prerequisites, if any
+    is_prerequisite: bool = False       # True if injected as a supporting prerequisite, False if employer-listed
+    prerequisite_for: List[str] = field(default_factory=list) # Canonical names of skills this prerequisite supports
+    origin: str = "Employer Target"     # "Employer Target" vs "Injected Prerequisite" vs "Interview Preparation"
+    rationale: str = ""                 # Human-readable explanation of why this step was included
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class LearningRoadmap:
+    """
+    Personalized, deterministic learning roadmap generated for a student
+    targeting a specific internship opportunity.
+    """
+    internship_id: int
+    internship_title: str
+    organization: str
+    total_steps: int
+    mandatory_steps_count: int
+    preferred_steps_count: int
+    estimated_total_duration: str       # e.g. "Approx. 3–5 weeks (self-paced estimate)" or "Self-paced interview preparation"
+    is_fully_qualified: bool            # True if student has 0 missing skills
+    steps: List[RoadmapStep] = field(default_factory=list)
+    injected_prerequisites_count: int = 0  # Count of supporting prerequisites not explicitly listed by employer
+    ethical_notice: str = (
+        "Ethical Notice: Missing profile skills indicate absence from the student profile, "
+        "not a verified lack of ability. Learning durations are approximate self-study estimates, "
+        "not guaranteed completion times."
+    )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "internship_id": self.internship_id,
+            "internship_title": self.internship_title,
+            "organization": self.organization,
+            "total_steps": self.total_steps,
+            "mandatory_steps_count": self.mandatory_steps_count,
+            "preferred_steps_count": self.preferred_steps_count,
+            "injected_prerequisites_count": self.injected_prerequisites_count,
+            "estimated_total_duration": self.estimated_total_duration,
+            "is_fully_qualified": self.is_fully_qualified,
+            "steps": [step.to_dict() for step in self.steps],
+            "ethical_notice": self.ethical_notice,
         }

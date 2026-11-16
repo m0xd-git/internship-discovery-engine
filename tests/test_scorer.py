@@ -8,7 +8,8 @@ All tests use in-memory dataclass instances; no persistent database rows are mod
 """
 
 import unittest
-from app.config import DEFAULT_SCORING_WEIGHTS
+from unittest.mock import patch
+from app.config import DEFAULT_SCORING_WEIGHTS, SEMANTIC_ACTIVE_SCORING_WEIGHTS
 from app.models.entities import Student, Internship
 from app.engine.scorer import (
     score_internship,
@@ -17,6 +18,7 @@ from app.engine.scorer import (
     calculate_preferred_skill_score,
     calculate_academic_alignment_score,
     calculate_location_alignment_score,
+    calculate_semantic_similarity_score,
 )
 from app.engine.gap_analyzer import analyze_skill_gaps
 
@@ -335,6 +337,207 @@ class TestScoringEngine(unittest.TestCase):
         self.assertEqual(ineligible[0].total_score, 0.0)
         self.assertFalse(ineligible[0].eligibility.is_eligible)
         self.assertIn("CGPA requirement not met", ineligible[0].eligibility.rejection_reasons[0])
+
+
+class TestSemanticScoringIntegration(unittest.TestCase):
+    """
+    Milestone 6.5 Unit Tests: Pretrained Semantic AI Scoring Integration.
+    Tests semantic weight integration, non-probability reporting,
+    deterministic text construction, graceful fallback rebalancing,
+    and hard gate isolation.
+    """
+
+    def setUp(self):
+        self.internship = Internship(
+            id=20,
+            title="Machine Learning Engineer Intern",
+            organization="AI Research Labs",
+            location="Bengaluru, India",
+            work_mode="Remote",
+            min_cgpa=3.0,
+            eligible_majors=["Computer Science", "Data Science", "Artificial Intelligence"],
+            min_grad_year=2025,
+            max_grad_year=2027,
+            description="Train transformer models, optimize NLP pipelines, and implement predictive algorithms.",
+            is_demo=True,
+            required_skills=["Python", "PyTorch"],
+            preferred_skills=["Docker", "Git"],
+        )
+
+        self.student = Student(
+            id=200,
+            name="Siddharth Rao",
+            email="siddharth@example.edu",
+            major="Computer Science",
+            cgpa=3.8,
+            graduation_year=2026,
+            preferred_work_mode="Remote",
+            preferred_location="Bengaluru, India",
+            bio_summary="Passionate about natural language processing, deep learning, and transformer architectures.",
+            skills=["Python", "PyTorch", "Docker", "Git"],
+        )
+
+    def test_semantic_scoring_active_success(self):
+        """Active semantic scoring must award semantic points and populate detailed breakdown."""
+        rec = score_internship(self.student, self.internship, use_semantic=True)
+
+        self.assertTrue(rec.eligibility.is_eligible)
+        self.assertGreater(rec.total_score, 0.0)
+
+        bd = rec.score_breakdown
+        sem = bd.semantic_similarity
+
+        self.assertEqual(sem["weight"], 0.25)
+        self.assertEqual(sem["max_points"], 25.0)
+        self.assertGreater(sem["points"], 0.0)
+        self.assertLessEqual(sem["points"], 25.0)
+        self.assertIsInstance(sem["raw_similarity"], float)
+        self.assertGreaterEqual(sem["raw_similarity"], 0.0)
+        self.assertLessEqual(sem["raw_similarity"], 1.0)
+        self.assertIn("contextual alignment", sem["qualitative_label"].lower())
+        self.assertFalse(sem["fallback_applied"])
+        self.assertIsNone(sem["fallback_reason"])
+        self.assertIn("does not certify", sem["notice"])
+
+        # Check total arithmetic sum
+        expected_total = round(
+            bd.required_skills["points"]
+            + bd.preferred_skills["points"]
+            + bd.academic_alignment["points"]
+            + bd.location_alignment["points"]
+            + sem["points"],
+            2,
+        )
+        self.assertEqual(rec.total_score, expected_total)
+
+    def test_higher_semantic_similarity_yields_higher_semantic_score(self):
+        """Relevant domain context must yield higher semantic points than unrelated context."""
+        ml_internship = self.internship  # NLP, transformers, PyTorch
+
+        # Create web frontend internship with identical required/preferred skills so heuristic score is equal
+        web_internship = Internship(
+            id=21,
+            title="Frontend UI Intern",
+            organization="Creative Studio",
+            location="Bengaluru, India",
+            work_mode="Remote",
+            min_cgpa=3.0,
+            eligible_majors=["Computer Science"],
+            min_grad_year=2025,
+            max_grad_year=2027,
+            description="Build responsive user interfaces using HTML, CSS animations, and visual UI layouts.",
+            is_demo=True,
+            required_skills=["Python", "PyTorch"],  # Same skills to keep heuristic points identical
+            preferred_skills=["Docker", "Git"],
+        )
+
+        rec_ml = score_internship(self.student, ml_internship, use_semantic=True)
+        rec_web = score_internship(self.student, web_internship, use_semantic=True)
+
+        sem_ml = rec_ml.score_breakdown.semantic_similarity
+        sem_web = rec_web.score_breakdown.semantic_similarity
+
+        # Candidate with NLP/deep learning bio should match ML role more closely than web role
+        self.assertGreater(sem_ml["raw_similarity"], sem_web["raw_similarity"])
+        self.assertGreater(sem_ml["points"], sem_web["points"])
+        self.assertGreater(rec_ml.total_score, rec_web.total_score)
+
+    def test_semantic_fallback_when_student_text_empty(self):
+        """If student profile lacks text for semantic encoding, engine must safely fall back to baseline weights."""
+        student_no_text = Student(
+            id=202,
+            name="Blank Profile",
+            email="blank@example.edu",
+            major="",  # empty
+            cgpa=3.5,
+            graduation_year=2026,
+            preferred_work_mode="Remote",
+            preferred_location="Bengaluru, India",
+            bio_summary="",  # empty
+            skills=[],       # empty
+        )
+        # Ensure eligible major matches by opening internship to all
+        self.internship.eligible_majors = ["*"]
+        student_no_text.major = "Computer Science"
+
+        rec = score_internship(student_no_text, self.internship, use_semantic=True)
+
+        self.assertTrue(rec.eligibility.is_eligible)
+        sem = rec.score_breakdown.semantic_similarity
+
+        self.assertTrue(sem["fallback_applied"])
+        self.assertIsNotNone(sem["fallback_reason"])
+        self.assertEqual(sem["points"], 0.0)
+        self.assertEqual(sem["max_points"], 0.0)
+        self.assertEqual(sem["weight"], 0.0)
+
+        # Baseline weights must be active: 45 / 15 / 20 / 20
+        bd = rec.score_breakdown
+        self.assertEqual(bd.required_skills["max_points"], 45.0)
+        self.assertEqual(bd.preferred_skills["max_points"], 15.0)
+        self.assertEqual(bd.academic_alignment["max_points"], 20.0)
+        self.assertEqual(bd.location_alignment["max_points"], 20.0)
+
+        # Total points sum must equal total_score and be bounded within 0..100
+        total_pts = round(
+            bd.required_skills["points"]
+            + bd.preferred_skills["points"]
+            + bd.academic_alignment["points"]
+            + bd.location_alignment["points"]
+            + sem["points"],
+            2,
+        )
+        self.assertEqual(rec.total_score, total_pts)
+
+    @patch("app.engine.semantic.SemanticEngine.encode_valid_text", return_value=None)
+    def test_semantic_fallback_when_encoding_fails(self, mock_encode):
+        """If model returns None (e.g. model offline or zero vector), fallback rebalancing must trigger."""
+        rec = score_internship(self.student, self.internship, use_semantic=True)
+
+        self.assertTrue(rec.eligibility.is_eligible)
+        sem = rec.score_breakdown.semantic_similarity
+
+        self.assertTrue(sem["fallback_applied"])
+        self.assertIn("unavailable or produced an invalid embedding", sem["fallback_reason"])
+        self.assertEqual(sem["points"], 0.0)
+        self.assertEqual(rec.score_breakdown.required_skills["max_points"], 45.0)
+
+    @patch("app.engine.semantic.SemanticEngine.encode_valid_text")
+    def test_ineligible_candidate_never_triggers_semantic_encoding(self, mock_encode):
+        """Hard Gate Invariant: Ineligible candidate must NEVER invoke semantic text encoding."""
+        # Force ineligibility via CGPA cutoff
+        self.internship.min_cgpa = 3.99  # Student has 3.8
+        rec = score_internship(self.student, self.internship, use_semantic=True)
+
+        self.assertFalse(rec.eligibility.is_eligible)
+        self.assertEqual(rec.total_score, 0.0)
+        # Mock must NEVER have been called!
+        mock_encode.assert_not_called()
+
+    def test_score_breakdown_arithmetic_exact_sum(self):
+        """All 5 factors in score breakdown must mathematically sum to 100 max points and total score."""
+        rec = score_internship(self.student, self.internship, use_semantic=True)
+        bd = rec.score_breakdown
+
+        max_sum = round(
+            bd.required_skills["max_points"]
+            + bd.preferred_skills["max_points"]
+            + bd.academic_alignment["max_points"]
+            + bd.location_alignment["max_points"]
+            + bd.semantic_similarity["max_points"],
+            2,
+        )
+        self.assertEqual(max_sum, 100.0)
+
+        points_sum = round(
+            bd.required_skills["points"]
+            + bd.preferred_skills["points"]
+            + bd.academic_alignment["points"]
+            + bd.location_alignment["points"]
+            + bd.semantic_similarity["points"],
+            2,
+        )
+        self.assertEqual(points_sum, rec.total_score)
 
 
 if __name__ == "__main__":

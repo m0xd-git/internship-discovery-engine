@@ -12,6 +12,10 @@ DATA_DIR = BASE_DIR / "data"
 DB_PATH = DATA_DIR / "internship_engine.db"
 SCHEMA_PATH = BASE_DIR / "app" / "models" / "schema.sql"
 
+# Semantic AI Configuration
+SEMANTIC_MODEL_NAME: str = "sentence-transformers/all-MiniLM-L6-v2"
+EMBEDDING_DIMENSION: int = 384
+
 # Initial heuristic scoring weights
 # ACADEMIC NOTE FOR EXAMINERS / VIVA:
 # These weights represent initial design choices based on pedagogical prioritization.

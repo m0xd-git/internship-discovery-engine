@@ -36,6 +36,8 @@ The system uses a **Decoupled Layered Architecture (Domain-Driven Service Patter
 |  3. Semantic Similarity (Sentence Transformers all-MiniLM-L6) |
 |  4. Skill-Gap Analyzer (Missing Required vs Preferred)        |
 |  5. Transparent Scorer (Bounded 0-100 Multi-Factor Math)     |
+|  6. Learning Roadmap Engine (Transitive Prerequisite DAG)     |
+|  7. Recommendation Explainer (Auditable Rationale Engine)     |
 +-------------------------------+-------------------------------+
                                 |
 +-------------------------------v-------------------------------+
@@ -100,7 +102,10 @@ ai proj/
 │   │   ├── eligibility.py         # Rule-based eligibility & exclusion gatekeeper
 │   │   ├── matcher.py             # Canonical skill normalizer & alias resolver
 │   │   ├── gap_analyzer.py        # Set-theoretic skill-gap analyzer
-│   │   └── scorer.py              # Transparent multi-criteria scoring engine
+│   │   ├── scorer.py              # Transparent multi-criteria scoring engine
+│   │   ├── semantic.py            # Pretrained Sentence Transformer embeddings & vector cache
+│   │   ├── roadmap.py             # Actionable pedagogical learning roadmaps & transitive prerequisites
+│   │   └── explainer.py           # Transparent recommendation explanation & attribution engine
 │   ├── routes/
 │   │   ├── __init__.py
 │   │   ├── api.py                 # REST API endpoints (/api/internships, /api/students, /api/recommend)
@@ -108,6 +113,7 @@ ai proj/
 │   ├── templates/
 │   │   ├── base.html              # Layout shell with demo banner, nav & ethical disclaimer
 │   │   ├── dashboard.html         # Candidate discovery dashboard & results explorer
+│   │   ├── internships.html       # Dedicated browsable catalog with search & filter pills
 │   │   └── profile.html           # Student profile editor & skill tag manager
 │   └── static/
 │       ├── css/
@@ -115,6 +121,7 @@ ai proj/
 │       └── js/
 │           ├── api.js             # Defensive fetch API client wrapper
 │           ├── dashboard.js       # Safe DOM controller for discovery & breakdowns
+│           ├── internships.js     # Catalog controller with client search & filtering
 │           └── profile.js         # Profile form validator & interactive skill manager
 ├── data/
 │   └── internship_engine.db       # Persistent SQLite database file
@@ -127,9 +134,12 @@ ai proj/
 │   ├── test_eligibility.py        # Unit tests for Rule-Based Eligibility Engine (21 tests)
 │   ├── test_matcher.py            # Unit tests for Skill Normalizer & Aliases (8 tests)
 │   ├── test_gap_analyzer.py       # Unit tests for Skill-Gap Analyzer (8 tests)
-│   ├── test_scorer.py             # Unit tests for Transparent Recommendation Scorer (12 tests)
-│   ├── test_api.py                # Integration tests for Flask REST API (18 tests)
-│   └── test_views.py              # Integration tests for HTML views & static assets (5 tests)
+│   ├── test_scorer.py             # Unit tests for Transparent Recommendation Scorer (18 tests)
+│   ├── test_semantic.py           # Unit tests for Pretrained Semantic AI & Vector Cache (13 tests)
+│   ├── test_roadmap.py            # Unit tests for Roadmap Generation & Prerequisite Expansion (21 tests)
+│   ├── test_explainer.py          # Unit tests for Recommendation Explainer & Attribution (13 tests)
+│   ├── test_api.py                # Integration tests for Flask REST API (30 tests)
+│   └── test_views.py              # Integration tests for HTML views & static assets (13 tests)
 ├── run.py                         # Application runner (starts local dev server)
 ├── requirements.txt               # Minimal external dependencies (Flask)
 ├── .gitignore                     # Git exclusion rules (.venv, *.db, cache, secrets)
@@ -149,8 +159,77 @@ ai proj/
 | `/api/students` | `GET` | List all registered student profiles with their skills | `200 OK` |
 | `/api/students/<id>` | `GET` | Retrieve profile and skills for a specific student | `200 OK` / `404` |
 | `/api/students` | `POST` | Create (201) or update (200) student profile with SQLite commit | `200 OK` / `201` / `400` / `404` |
-| `/api/recommend` | `POST` | Generate recommendations (by `student_id` or dynamic profile) | `200 OK` / `400` / `404` |
+| `/api/recommend` | `POST` | Generate recommendations with explanations and roadmaps | `200 OK` / `400` / `404` |
+| `/api/students/<s_id>/roadmap/<i_id>` | `GET` | Retrieve personalized learning roadmap for student and opportunity | `200 OK` / `400` / `404` |
+| `/api/roadmap?student_id=X&internship_id=Y` | `GET` | Query parameter route for personalized learning roadmap | `200 OK` / `400` / `404` |
 | `/health` | `GET` | Operational health check probe returning system status | `200 OK` |
+
+---
+
+## Pedagogical Learning Roadmap Engine & Prerequisite Expansion
+
+A key innovation in **Milestone 7.1** is the transition from a flat skill checklist to an actionable, pedagogically sequenced learning roadmap:
+
+### 1. Employer-Listed Skills vs. Supporting Prerequisites
+- **Employer-Listed Skills:** Competencies explicitly written into the internship posting (`required_skills` or `preferred_skills`).
+- **Supporting Prerequisites:** Foundational competencies required to learn an employer target (e.g., `SQL` is an explicit prerequisite for `PostgreSQL`, and `JavaScript` + `HTML/CSS` are prerequisites for `React`).
+- **Why Roadmaps Can Contain More Skills Than the Skill-Gap Report:** The employer-facing **Skill-Gap Report** strictly audits whether the candidate matches the job listing. The **Learning Roadmap**, however, is an educational learning plan. If a student attempts to learn `PostgreSQL` without knowing `SQL`, they will hit a wall. The roadmap transitively injects `SQL` as a foundational step (`is_prerequisite=True`, labeled `"Supporting prerequisite for PostgreSQL — not explicitly listed by the employer"`).
+
+### 2. Recursive Prerequisite Expansion & Priority Inheritance
+- **Recursive Expansion:** If Skill A requires Skill B, and Skill B requires Skill C, the engine discovers all missing dependencies across the directed acyclic graph (DAG).
+- **Possessed Prerequisite Guard:** If the student already possesses a prerequisite (e.g., possesses `Python`), it is strictly omitted from the roadmap.
+- **Priority Inheritance:**
+  - Prerequisites of mandatory requirements inherit **High Priority (`High (Mandatory Requirement)`)**.
+  - Prerequisites of preferred opportunities inherit **Medium Priority (`Medium (Growth Opportunity)`)**.
+  - If a prerequisite supports both categories (e.g. required `PyTorch` and preferred `Pandas` both need `Python`), **mandatory priority wins**.
+- **Topological DAG Ordering:** A cycle-safe 3-color Depth-First Search orders foundational prerequisites before dependent technologies.
+
+---
+
+## Transparent Recommendation Explanation & Rationale Engine (Milestone 7.2)
+
+To eliminate the "Black Box Problem" of recommendation algorithms, **Milestone 7.2** implements an auditable, deterministic rationale engine (`app/engine/explainer.py`):
+
+1. **Multi-Factor Attribution:** Explains each of the 5 scoring components (`required_skills`, `preferred_skills`, `academic_alignment`, `location_alignment`, `semantic_similarity`) with points earned, max points, qualitative impact level (`High Positive Impact`, `Moderate Positive Impact`, `Low Positive Impact`, `Zero Contribution`, or `Disqualified`), and human-readable summaries.
+2. **Deterministic Strongest Factor Identification:** Objectively identifies which positive scoring dimensions contributed the most to the match. Ties are handled impartially by marking all top-scoring factors.
+3. **Ethical Framing of Missing Competencies:** Missing skills are described as *"Omitted from profile"*, strictly avoiding judgmental language like "unqualified" or "lacks ability", backed by a global ethical notice.
+4. **Hard Gatekeeper Disqualification Isolation:** Ineligible listings receive a total score of strictly $0.0$, all recommendation factor impact levels are marked as `Disqualified`, and specific gatekeeper criteria (e.g. CGPA cutoff, major) are cleanly segregated into `eligibility_summary`.
+5. **Semantic AI Transparency & Fallback Rebalancing:** Discloses raw cosine similarity (e.g. $0.8240$), qualitative tier, point contributions, and non-probability notices. Explains dynamic weight rebalancing to baseline heuristic weights whenever semantic AI is bypassed.
+
+---
+
+## User Interface & Experience Redesign (Milestones A, B, and C)
+
+To minimize cognitive load, eliminate visual clutter, and provide professional accessibility compliance, the frontend was completely reorganized into a **Decoupled 3-Page Application Architecture**:
+
+### 1. Three-Page Navigation Architecture
+- **Discovery Dashboard (`/`):**
+  - **Compact Student Profile Bar:** Replaced bulky static tables with an intuitive context bar displaying student name, major, CGPA, graduation year, work mode, location, and a concise pill counter with a direct *"Edit Profile"* action link.
+  - **Scannable Recommendation Cards:** Clean vertical flow featuring title, organization, location, work mode, and **Qualitative Match Tiers** (`Strong Match` $\ge 75$, `Moderate Match` $\ge 50$, `Partial Match` $> 0$, `Disqualified` $= 0$).
+  - **Always-Visible Driver Insights:** Prominently displays the explanation headline and top scoring drivers without requiring manual interaction.
+  - **Progressive Disclosure Drawers:** Detailed factor attributions (points earned vs. max, impact badges, semantic AI metrics) and 4-tier skill-gap lists (matched required, missing required, matched preferred, missing preferred) are cleanly tucked into accessible collapsible accordions.
+  - **Concise Roadmap Summary Card:** Replaced long inline timeline nodes on the card with an actionable summary box showing estimated self-study duration, step counts, and a direct button to launch the full roadmap modal.
+- **Internships Catalog (`/internships`):**
+  - **Dedicated Opportunity Discovery:** Independent listing of all verified demonstration opportunities (`is_demo = 1`).
+  - **Interactive Search & Filtering Toolbar:** Real-time client-side instant search across title, organization, and department, paired with work-mode filter pills (`All`, `Remote`, `Hybrid`, `Onsite`) showing dynamic opportunity counts.
+  - **Expandable Opportunity Drawers:** Accordion disclosing role descriptions, key responsibilities, and hard gatekeeper eligibility criteria.
+  - **Student Context Evaluator:** Allows selecting a registered student profile to unlock a *"View Recommendations"* deep-link directly back to the Discovery Dashboard (`/?student_id=X`), strictly reusing the existing recommendation engine without duplicating scoring logic.
+- **Student Profile Management (`/profile`):**
+  - Dedicated student profile editor with SQLite persistence, form validation, and interactive skill tag manager with self-reported proficiency levels (`Beginner`, `Intermediate`, `Advanced`).
+
+### 2. Accessible Learning Roadmap Modal Dialog
+- **WAI-ARIA Dialog Compliance:** Decorated with `role="dialog"`, `aria-modal="true"`, `aria-labelledby="modalRoadmapTitle"`, and `aria-describedby="modalRoadmapSubtitle"`.
+- **Keyboard Focus Trapping & Restoration:**
+  - Automatically shifts focus to the close button (`#closeRoadmapModalBtn`) upon opening.
+  - Intercepts `Tab` and `Shift+Tab` to trap keyboard focus strictly inside the dialog while active.
+  - Listens for the `Escape` key and backdrop clicks to cleanly dismiss the modal.
+  - Restores keyboard focus back to the exact trigger button that opened the dialog.
+- **Injected Prerequisite Badging:** Distinct purple badges (`Supporting Prerequisite`) and markers visually separate foundational building blocks from employer-listed criteria.
+
+### 3. Comprehensive Accessibility (A11y) & Responsive Polish
+- **Accessible State Toggles:** All expandable drawers expose `aria-expanded="true/false"` and `aria-controls="<drawer-id>"`. Work-mode filter buttons expose `role="group"` and `aria-pressed="true/false"`.
+- **High-Contrast Visible Focus Rings:** Applied `:focus-visible` styling (`outline: 2px solid var(--primary); outline-offset: 2px;`) across all buttons, links, inputs, selects, and textareas.
+- **Fluid Multi-Device Layout:** Fully responsive breakpoints for desktop ($1200\text{px}$), tablet ($768\text{px}$), and mobile ($480\text{px}$) with zero horizontal overflow.
 
 ---
 
@@ -205,11 +284,12 @@ python run.py
 ```
 Open your web browser and navigate to:
 - **Candidate Discovery Dashboard:** [http://127.0.0.1:5000/](http://127.0.0.1:5000/)
+- **Available Internships Catalog:** [http://127.0.0.1:5000/internships](http://127.0.0.1:5000/internships)
 - **Student Profile Management:** [http://127.0.0.1:5000/profile](http://127.0.0.1:5000/profile)
 - **Operational Health Probe:** [http://127.0.0.1:5000/health](http://127.0.0.1:5000/health)
 
-#### 6. Run the Full Automated Test Suite (83 Tests)
-Verifies database integrity, eligibility gatekeeper rules, canonical skill matching, transparent scoring, and Flask REST API endpoints:
+#### 6. Run the Full Automated Test Suite (156 Tests)
+Verifies database integrity, eligibility gatekeeper rules, canonical skill matching, transparent scoring, dense vector semantic AI, personalized roadmap transitive prerequisite sequencing, auditable recommendation explanations, Flask REST API endpoints, and frontend HTML/CSS view controllers:
 ```bash
 python -m unittest discover -s tests -p "test_*.py" -v
 ```
@@ -223,6 +303,10 @@ python -m unittest discover -s tests -p "test_*.py" -v
 - [x] **Milestone 3**: Exact Skill Matching & Skill-Gap Analysis (Completed & Verified)
 - [x] **Milestone 4**: Transparent Recommendation Scorer (Heuristic Baseline) (Completed & Verified)
 - [x] **Milestone 5**: Flask REST API & Interactive Student Portal MVP (Completed & Verified)
-- [ ] **Milestone 6**: Python 3.13 Verification & Sentence Transformers Semantic AI (Next)
-- [ ] **Milestone 7**: Enhanced Visual Explanations & Actionable Learning Roadmaps
+- [x] **Milestone 6**: Python 3.13 Verification & Sentence Transformers Semantic AI (Completed & Verified)
+- [x] **Milestone 7.1**: Personalized Learning Roadmaps with Transitive Prerequisite DAG (Completed & Verified)
+- [x] **Milestone 7.2**: Deterministic Recommendation Explanation & Rationale Engine (Completed & Verified)
+- [x] **Milestone 7.3**: API Integration for Explanations and Learning Roadmaps (Completed & Verified)
+- [x] **Milestone 7.4**: Visual Recommendation Explanations & Frontend Roadmap Integration (Completed & Verified)
+- [x] **UI/UX Redesign**: Milestone A (Catalog), Milestone B (Progressive Disclosure), Milestone C (Accessibility & Polish) (Completed & Verified)
 - [ ] **Milestone 8**: Final System Verification, Viva Defense Guide & Presentation Prep

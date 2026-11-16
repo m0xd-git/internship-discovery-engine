@@ -29,42 +29,26 @@
             <button id="discoverBtn" class="btn btn-primary" disabled>
                 <span class="btn-text">Discover Recommended Internships</span>
             </button>
-            <a href="{{ url_for('views.profile') }}" id="editProfileLink" class="btn btn-outline">Edit / Create Profile</a>
+            <a href="{{ url_for('views.profile') }}" id="editProfileLink" class="btn btn-outline">Edit Profile</a>
         </div>
     </div>
 
-    <!-- Active Student Summary Info -->
-    <div id="studentDetailsCard" class="student-summary-box hidden">
-        <div class="summary-grid">
-            <div class="summary-item">
-                <span class="summary-label">Name:</span>
-                <span class="summary-value" id="summaryName">-</span>
+    <!-- Active Student Summary Info (Streamlined Compact Context Bar) -->
+    <div id="studentDetailsCard" class="student-compact-bar hidden">
+        <div class="compact-profile-content">
+            <div class="compact-profile-main">
+                <span class="compact-student-name" id="summaryName">-</span>
+                <span class="compact-meta-chip"><span class="compact-meta-label">Major:</span> <span id="summaryMajor">-</span></span>
+                <span class="compact-meta-chip"><span class="compact-meta-label">CGPA:</span> <strong id="summaryCgpa">-</strong></span>
+                <span class="compact-meta-chip"><span class="compact-meta-label">Grad:</span> <span id="summaryGradYear">-</span></span>
+                <span class="compact-meta-chip"><span class="compact-meta-label">Mode:</span> <span id="summaryWorkMode">-</span></span>
+                <span class="compact-meta-chip"><span class="compact-meta-label">Location:</span> <span id="summaryLocation">-</span></span>
             </div>
-            <div class="summary-item">
-                <span class="summary-label">Academic Major:</span>
-                <span class="summary-value" id="summaryMajor">-</span>
-            </div>
-            <div class="summary-item">
-                <span class="summary-label">CGPA:</span>
-                <span class="summary-value" id="summaryCgpa">-</span>
-            </div>
-            <div class="summary-item">
-                <span class="summary-label">Graduation Year:</span>
-                <span class="summary-value" id="summaryGradYear">-</span>
-            </div>
-            <div class="summary-item">
-                <span class="summary-label">Preferred Mode:</span>
-                <span class="summary-value" id="summaryWorkMode">-</span>
-            </div>
-            <div class="summary-item">
-                <span class="summary-label">Location:</span>
-                <span class="summary-value" id="summaryLocation">-</span>
-            </div>
-        </div>
-        <div class="student-skills-row">
-            <span class="summary-label">Current Listed Skills:</span>
-            <div id="summarySkills" class="pills-container">
-                <!-- Dynamically populated skills -->
+            <div class="compact-profile-skills">
+                <span class="compact-skills-heading" id="summarySkillsCount">Skills Listed:</span>
+                <div id="summarySkills" class="pills-container compact-skills-pills">
+                    <!-- Dynamically populated skills -->
+                </div>
             </div>
         </div>
     </div>
@@ -126,6 +110,22 @@
         </div>
     </div>
 </section>
+
+<!-- Dedicated Learning Roadmap Modal Dialog -->
+<div id="roadmapModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modalRoadmapTitle" aria-describedby="modalRoadmapSubtitle">
+    <div class="modal-card">
+        <div class="modal-header">
+            <div>
+                <h2 id="modalRoadmapTitle" class="modal-title">Personalized Learning Roadmap</h2>
+                <p id="modalRoadmapSubtitle" class="modal-subtitle">Pedagogically sequenced milestones & prerequisites</p>
+            </div>
+            <button id="closeRoadmapModalBtn" class="modal-close-btn" type="button" aria-label="Close Roadmap Dialog">&times;</button>
+        </div>
+        <div id="modalRoadmapBody" class="modal-body">
+            <!-- Dynamically populated via dashboard.js -->
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}

@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+
+{% block title %}Available Internships | Internship Discovery Engine{% endblock %}
+
+{% block content %}
+<section class="section-header">
+    <div class="header-intro">
+        <h1>Available Internship Opportunities</h1>
+        <p class="subtitle">
+            Browse verified demonstration opportunities across software engineering, data science, and AI/ML.
+            Inspect role responsibilities, required technical skills, and mandatory eligibility criteria.
+        </p>
+    </div>
+</section>
+
+<!-- Student Evaluation Context Bar (Optional Selection to Check Recommendations) -->
+<section class="card catalog-student-bar" aria-labelledby="eval-student-heading">
+    <div class="selection-row">
+        <div class="select-group">
+            <label for="internshipStudentSelect" id="eval-student-heading">
+                <strong>Evaluate with Student Profile:</strong>
+            </label>
+            <div class="select-wrapper">
+                <select id="internshipStudentSelect" class="form-control" aria-describedby="eval-student-hint">
+                    <option value="">-- Optional: Select a Student to Check Fit --</option>
+                </select>
+            </div>
+            <span id="eval-student-hint" class="field-hint">
+                Select a candidate to unlock one-click personalized recommendation evaluations on the Discovery Dashboard.
+            </span>
+        </div>
+        <div class="selection-actions" id="selectedStudentQuickActions" style="display: none;">
+            <a href="/" id="dashboardDirectLink" class="btn btn-primary">
+                <span class="btn-text">Go to Dashboard</span>
+            </a>
+        </div>
+    </div>
+</section>
+
+<!-- Search, Filter & Controls Toolbar -->
+<section class="catalog-toolbar-card" aria-label="Catalog Filters">
+    <div class="toolbar-search-row">
+        <div class="search-input-wrapper">
+            <input
+                type="search"
+                id="internshipSearchInput"
+                class="form-control search-input"
+                placeholder="Search by title, organization, or department (e.g. Backend, OpenTech, ML)..."
+                aria-label="Search internships by title or organization"
+                autocomplete="off"
+            >
+        </div>
+        <button type="button" id="clearFiltersBtn" class="btn btn-outline btn-clear-filter">
+            Clear Filters
+        </button>
+    </div>
+
+    <div class="toolbar-filters-row">
+        <div class="filter-group">
+            <span class="filter-label">Work Mode:</span>
+            <div class="filter-btn-group" role="group" aria-label="Filter by work mode">
+                <button type="button" class="filter-btn active" data-mode="All">All (<span id="countModeAll">0</span>)</button>
+                <button type="button" class="filter-btn" data-mode="Remote">Remote (<span id="countModeRemote">0</span>)</button>
+                <button type="button" class="filter-btn" data-mode="Hybrid">Hybrid (<span id="countModeHybrid">0</span>)</button>
+                <button type="button" class="filter-btn" data-mode="Onsite">Onsite (<span id="countModeOnsite">0</span>)</button>
+            </div>
+        </div>
+        <div class="filter-stats">
+            <span id="internshipCountText" class="results-count-text">Loading catalog...</span>
+        </div>
+    </div>
+</section>
+
+<!-- Feedback Alert Box -->
+<div id="internshipAlert" class="alert hidden" role="alert" aria-live="assertive"></div>
+
+<!-- Loading Spinner -->
+<div id="loadingInternships" class="loading-state" aria-live="polite">
+    <div class="spinner"></div>
+    <p>Loading available internship listings from database...</p>
+</div>
+
+<!-- Internships Catalog Grid -->
+<section id="catalogSection" class="catalog-section" aria-label="Internship Catalog">
+    <div id="internshipsGrid" class="cards-grid">
+        <!-- Dynamically populated by internships.js -->
+    </div>
+
+    <!-- Empty State -->
+    <div id="emptyInternshipsState" class="empty-state hidden" role="status">
+        <h3>No Matching Internships Found</h3>
+        <p>No opportunities match your current search and filter combination.</p>
+        <button type="button" id="resetEmptyBtn" class="btn btn-outline" style="margin-top: 1rem;">
+            Reset Search & Filters
+        </button>
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/api.js') }}"></script>
+<script src="{{ url_for('static', filename='js/internships.js') }}"></script>
+{% endblock %}

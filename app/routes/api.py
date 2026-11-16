@@ -26,6 +26,8 @@ from app.database.db import (
 )
 from app.models.entities import Student, StudentSkill
 from app.engine.scorer import generate_recommendations
+from app.engine.eligibility import check_eligibility
+from app.engine.roadmap import generate_roadmap_for_internship
 
 api_bp = Blueprint("api", __name__)
 
@@ -360,8 +362,8 @@ def get_recommendations():
         internships = get_all_internships(conn)
         conn.close()
 
-        # Generate recommendations using core engine
-        eligible, ineligible = generate_recommendations(student, internships)
+        # Generate recommendations using core engine (with Semantic AI enabled)
+        eligible, ineligible = generate_recommendations(student, internships, use_semantic=True)
 
         return jsonify({
             "status": "success",
@@ -379,3 +381,110 @@ def get_recommendations():
             "status": "error",
             "message": "An unexpected error occurred while calculating recommendations.",
         }), 500
+
+
+# -----------------------------------------------------------------------------
+# 4. Learning Roadmap Endpoints
+# -----------------------------------------------------------------------------
+@api_bp.route("/students/<student_id>/roadmap/<internship_id>", methods=["GET"])
+@api_bp.route("/students/<student_id>/roadmaps/<internship_id>", methods=["GET"])
+def get_student_internship_roadmap(student_id: Any, internship_id: Any):
+    """
+    Returns a personalized, deterministic learning roadmap for a student targeting
+    a specific internship opportunity.
+
+    Validates identifiers defensively:
+    - 400 Bad Request if student_id or internship_id are not valid positive integers.
+    - 404 Not Found if either the student or internship does not exist in SQLite.
+
+    Includes:
+    - Employer-listed required and preferred skills.
+    - Transitively injected supporting prerequisites.
+    - Priority, pedagogical phases, estimated self-study durations, and rationales.
+    - Eligibility status and ethical non-judgmental notice.
+    """
+    # 1. Validate student_id
+    try:
+        s_id = int(student_id)
+        if s_id <= 0:
+            return jsonify({
+                "status": "error",
+                "message": f"Invalid student ID '{student_id}'. Student ID must be a positive integer.",
+            }), 400
+    except (ValueError, TypeError):
+        return jsonify({
+            "status": "error",
+            "message": f"Invalid student ID '{student_id}'. Student ID must be an integer.",
+        }), 400
+
+    # 2. Validate internship_id
+    try:
+        i_id = int(internship_id)
+        if i_id <= 0:
+            return jsonify({
+                "status": "error",
+                "message": f"Invalid internship ID '{internship_id}'. Internship ID must be a positive integer.",
+            }), 400
+    except (ValueError, TypeError):
+        return jsonify({
+            "status": "error",
+            "message": f"Invalid internship ID '{internship_id}'. Internship ID must be an integer.",
+        }), 400
+
+    # 3. Retrieve student and internship from SQLite
+    try:
+        conn = _get_db()
+        student = get_student_by_id(conn, s_id)
+        if not student:
+            conn.close()
+            return jsonify({
+                "status": "error",
+                "message": f"Student with ID {s_id} was not found.",
+            }), 404
+
+        internship = get_internship_by_id(conn, i_id)
+        conn.close()
+        if not internship:
+            return jsonify({
+                "status": "error",
+                "message": f"Internship with ID {i_id} was not found.",
+            }), 404
+
+        # 4. Check eligibility and generate personalized roadmap
+        eligibility = check_eligibility(student, internship)
+        roadmap = generate_roadmap_for_internship(student, internship)
+
+        return jsonify({
+            "status": "success",
+            "student_id": student.id,
+            "student_name": student.name,
+            "internship_id": internship.id,
+            "internship_title": internship.title,
+            "organization": internship.organization,
+            "is_eligible": eligibility.is_eligible,
+            "eligibility": eligibility.to_dict(),
+            "roadmap": roadmap.to_dict(),
+        }), 200
+
+    except Exception:
+        return jsonify({
+            "status": "error",
+            "message": "An unexpected error occurred while generating the personalized learning roadmap.",
+        }), 500
+
+
+@api_bp.route("/roadmap", methods=["GET"])
+@api_bp.route("/roadmaps", methods=["GET"])
+def get_roadmap_by_query():
+    """
+    Alternative query-parameter endpoint for retrieving a student's learning roadmap.
+    Example: GET /api/roadmap?student_id=1&internship_id=2
+    """
+    student_id = request.args.get("student_id")
+    internship_id = request.args.get("internship_id")
+    if not student_id or not internship_id:
+        return jsonify({
+            "status": "error",
+            "message": "Both 'student_id' and 'internship_id' query parameters are required.",
+        }), 400
+    return get_student_internship_roadmap(student_id, internship_id)
